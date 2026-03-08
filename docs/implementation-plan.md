@@ -1,7 +1,7 @@
 # Implementation Plan: Mobile Check Deposit System
 
 **Generated:** 2026-03-08
-**Status:** Ready to build
+**Status:** Ready to build (v2 — reviewed)
 **Build order:** Phases 1–18, each has file paths, signatures, data structures, and acceptance criteria
 
 ---
@@ -772,7 +772,6 @@ package vendor
 import (
     "context"
     "fmt"
-    "strings"
     "github.com/google/uuid"
 )
 
@@ -803,13 +802,13 @@ func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
     }
 }
 
-// extractSuffix returns the last 4 chars of accountID, uppercased.
+// extractSuffix returns the last 4 chars of accountID.
 // "ACC-SOFI-1003" → "1003"
 func extractSuffix(accountID string) string {
     if len(accountID) < 4 {
         return accountID
     }
-    return strings.ToUpper(accountID[len(accountID)-4:])
+    return accountID[len(accountID)-4:]
 }
 
 func iqaFailBlur(txID string) *Response {
@@ -1394,6 +1393,12 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
         return nil, err
     }
 
+    // NOTE: Steps 2-6 use separate transactions for each state transition before the
+    // critical section. If the server crashes between commits, a transfer may be stuck
+    // in an intermediate state (e.g., Validating with no vendor result). This is acceptable
+    // for the demo — the critical section (Analyzing→Approved→FundsPosted + ledger posting)
+    // is correctly atomic. Production would use a saga pattern or outbox table.
+
     // 2. Transition Requested → Validating
     tx1, err := s.machine.BeginAndTransition(ctx, transfer.ID,
         models.StatusRequested, models.StatusValidating, "system", nil)
@@ -1529,6 +1534,22 @@ func (h *Handler) Submit(c *gin.Context)
 
 // GET /api/v1/deposits/:id
 func (h *Handler) GetByID(c *gin.Context)
+
+// GetByID returns the transfer object plus state_history from state_transitions table.
+// Response shape:
+// {
+//   "data": {
+//     "transfer_id": "...",
+//     "status": "funds_posted",
+//     ...all transfer fields...
+//     "state_history": [
+//       {"from": "requested", "to": "validating", "triggered_by": "system", "at": "..."},
+//       {"from": "validating", "to": "analyzing", "triggered_by": "system", "at": "..."},
+//       ...
+//     ]
+//   }
+// }
+// Query: SELECT * FROM state_transitions WHERE transfer_id = $1 ORDER BY created_at ASC
 
 // GET /api/v1/deposits
 func (h *Handler) List(c *gin.Context)
@@ -1713,13 +1734,12 @@ package settlement
 // 1. Calculate cutoff time (or use provided batch_date)
 // 2. Query eligible transfers: status=funds_posted AND created_at <= cutoff AND settlement_batch_id IS NULL
 // 3. Create settlement_batches record
-// 4. For each transfer:
-//    a. Open tx
-//    b. machine.Transition(tx, id, FundsPosted, Completed, "system", {batch_id: ...})
-//    c. UPDATE transfers SET settlement_batch_id = batch.ID
-//    d. Commit tx
-// 5. Generate X9 ICL file via generator.Generate()
-// 6. UPDATE settlement_batches SET file_path, deposit_count, total_amount, status='submitted'
+// 4. Generate X9 ICL file to temp path via generator.Generate() — before any state changes
+// 5. For each transfer: open tx, transition FundsPosted→Completed, set settlement_batch_id, commit
+// 6. Move X9 file from temp to final path: {SETTLEMENT_OUTPUT_DIR}/{date}_batch_{uuid}.x9
+// 7. UPDATE settlement_batches SET file_path, deposit_count, total_amount, status='submitted'
+// If step 4 fails, no state changes have occurred — safe to retry.
+// If step 5 partially fails, the X9 file exists and successful transitions are committed.
 func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batch, error)
 
 // getEligibleDeposits returns FundsPosted transfers before the cutoff.
@@ -1857,10 +1877,9 @@ func main() {
         ops.POST("/deposits/:id/approve", operatorHandler.Approve)
         ops.POST("/deposits/:id/reject", operatorHandler.Reject)
         ops.GET("/audit", operatorHandler.GetAuditLog)
+        // Return lives in operator group — only operators can trigger returns
+        ops.POST("/deposits/:id/return", depositHandler.Return)
     }
-
-    // Return endpoint (operator)
-    r.POST("/api/v1/deposits/:id/return", middleware.OperatorAuth(), depositHandler.Return)
 
     // Settlement endpoint (operator)
     r.POST("/api/v1/settlement/trigger", middleware.OperatorAuth(), settlementHandler.Trigger)
@@ -1891,6 +1910,8 @@ type Config struct {
 ## Phase 13: React Frontend
 
 **Day 5 — 6 hours**
+
+**Fallback decision point:** If React components are not functional by end of day 5, cut the frontend entirely. Redirect day 6 time to test coverage and demo scripts. The backend API is fully testable via curl — demo scripts in Phase 15 cover all scenarios. This trades 10 rubric points (operator UI) for stronger scores in core correctness (25 pts) and tests (10 pts).
 
 ### 13.1 `web/src/api.js`
 
