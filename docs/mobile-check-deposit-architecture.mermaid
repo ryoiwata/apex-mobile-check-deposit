@@ -1,0 +1,125 @@
+---
+title: "Mobile Check Deposit System — Architecture"
+---
+graph TB
+    subgraph CLIENT["📱 Client Layer"]
+        MOBILE["Mobile App<br/>(React Demo UI)"]
+        OPERATOR["Operator Dashboard<br/>(React)"]
+    end
+
+    subgraph API_GW["🔐 API Gateway (Gin Router)"]
+        AUTH["Auth Middleware<br/>Session Validation"]
+        RATE["Rate Limiter<br/>(Redis)"]
+        ROUTES["REST Endpoints"]
+    end
+
+    subgraph VENDOR["🏦 Vendor Service (Stubbed)"]
+        direction TB
+        VENDOR_API["Vendor API Stub"]
+        IQA["Image Quality<br/>Assessment"]
+        MICR["MICR Extraction<br/>& OCR"]
+        DUPE_V["Duplicate<br/>Detection"]
+        VENDOR_API --> IQA
+        IQA -->|Pass| MICR
+        MICR --> DUPE_V
+    end
+
+    subgraph FUNDING["⚙️ Funding Service"]
+        direction TB
+        ACCT_RESOLVE["Account Resolver<br/>→ Internal IDs"]
+        BIZ_RULES["Business Rules Engine"]
+        LIMIT["Deposit Limit<br/>Check ≤$5,000"]
+        CONTRIB["Contribution Type<br/>Defaults"]
+        DUPE_F["Duplicate Deposit<br/>Detection"]
+        BIZ_RULES --> LIMIT
+        BIZ_RULES --> CONTRIB
+        BIZ_RULES --> DUPE_F
+    end
+
+    subgraph STATE["🔄 Transfer State Machine"]
+        SM["State Manager<br/>Requested → Validating → Analyzing<br/>→ Approved → FundsPosted → Completed<br/>↘ Rejected / Returned"]
+    end
+
+    subgraph LEDGER["📒 Ledger & Posting"]
+        LEDGER_SVC["Ledger Service"]
+        TRANSFER_REC["Transfer Records<br/>Type: MOVEMENT<br/>SubType: DEPOSIT"]
+        REVERSAL["Reversal Engine<br/>+ $30 Return Fee"]
+    end
+
+    subgraph SETTLEMENT["📄 Settlement Engine"]
+        BATCH["EOD Batch Processor<br/>6:30 PM CT Cutoff"]
+        X9["X9 ICL Generator<br/>(moov-io/imagecashletter)"]
+        ACK["Bank ACK Tracker"]
+    end
+
+    subgraph DATA["🗄️ Data Layer"]
+        PG[("PostgreSQL<br/>Transfers | Ledger<br/>Audit | Accounts")]
+        REDIS[("Redis<br/>Cache | Rate Limits<br/>Dupe Hashes")]
+    end
+
+    subgraph INFRA["🐳 Infrastructure"]
+        DOCKER["Docker Compose"]
+        GO_SVC["Go Backend<br/>(Gin)"]
+        REACT_UI["React Frontend<br/>(Vite)"]
+    end
+
+    %% Client → API
+    MOBILE -->|"POST /deposits<br/>images + amount + account"| AUTH
+    OPERATOR -->|"GET/POST /operator/*<br/>review, approve, reject"| AUTH
+    AUTH --> RATE
+    RATE --> ROUTES
+
+    %% API → Services
+    ROUTES -->|"Submit Deposit"| VENDOR_API
+    ROUTES -->|"Apply Rules"| ACCT_RESOLVE
+    ACCT_RESOLVE --> BIZ_RULES
+    ROUTES -->|"Review Actions"| SM
+    ROUTES -->|"Generate Settlement"| BATCH
+
+    %% Vendor → Funding flow
+    DUPE_V -->|"Validation Result"| SM
+    SM -->|"Validated"| BIZ_RULES
+
+    %% Funding → Ledger
+    BIZ_RULES -->|"Approved"| LEDGER_SVC
+    LEDGER_SVC --> TRANSFER_REC
+
+    %% State updates
+    LEDGER_SVC -->|"FundsPosted"| SM
+
+    %% Settlement flow
+    BATCH --> X9
+    X9 -->|"X9 ICL File"| ACK
+    ACK -->|"Completed"| SM
+
+    %% Return flow
+    ACK -->|"Return Notification"| REVERSAL
+    REVERSAL -->|"Returned"| SM
+
+    %% Data connections
+    SM --> PG
+    LEDGER_SVC --> PG
+    RATE --> REDIS
+    DUPE_F --> REDIS
+    VENDOR_API --> PG
+
+    %% Styling
+    classDef client fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
+    classDef api fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#78350f
+    classDef vendor fill:#fce7f3,stroke:#ec4899,stroke-width:2px,color:#831843
+    classDef funding fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#065f46
+    classDef state fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#3730a3
+    classDef ledger fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#9a3412
+    classDef settlement fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#166534
+    classDef data fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#334155
+    classDef infra fill:#faf5ff,stroke:#a855f7,stroke-width:2px,color:#581c87
+
+    class MOBILE,OPERATOR client
+    class AUTH,RATE,ROUTES api
+    class VENDOR_API,IQA,MICR,DUPE_V vendor
+    class ACCT_RESOLVE,BIZ_RULES,LIMIT,CONTRIB,DUPE_F funding
+    class SM state
+    class LEDGER_SVC,TRANSFER_REC,REVERSAL ledger
+    class BATCH,X9,ACK settlement
+    class PG,REDIS data
+    class DOCKER,GO_SVC,REACT_UI infra
