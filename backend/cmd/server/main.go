@@ -16,6 +16,7 @@ import (
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/middleware"
 	"github.com/apex/mcd/internal/operator"
+	"github.com/apex/mcd/internal/settlement"
 	"github.com/apex/mcd/internal/state"
 	"github.com/apex/mcd/internal/vendor"
 )
@@ -125,6 +126,7 @@ func main() {
 	ledgerSvc := ledger.NewService(sqlDB)
 	depositSvc := deposit.NewService(sqlDB, machine, vendorSvc, fundingSvc, ledgerSvc)
 	operatorSvc := operator.NewService(sqlDB, machine, ledgerSvc, fundingSvc)
+	settlementSvc := settlement.NewService(sqlDB, machine, cfg.SettlementOutputDir)
 
 	// --- Create handlers ---
 	depositHandler := deposit.NewHandler(depositSvc, deposit.Config{
@@ -132,6 +134,7 @@ func main() {
 		ReturnFeeCents:  cfg.ReturnFeeCents,
 	})
 	operatorHandler := operator.NewHandler(operatorSvc)
+	settlementHandler := settlement.NewHandler(settlementSvc)
 	ledgerHandler := ledger.NewHandler(ledgerSvc)
 
 	// --- Configure Gin router ---
@@ -201,6 +204,8 @@ func main() {
 		ops.GET("/audit", operatorHandler.GetAuditLog)
 		// Return endpoint lives here — only operators can trigger returns
 		ops.POST("/deposits/:id/return", depositHandler.Return)
+		// Settlement trigger
+		ops.POST("/settlement/trigger", settlementHandler.Trigger)
 	}
 
 	log.Printf("Starting server on :%s", cfg.ServerPort)
