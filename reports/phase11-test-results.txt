@@ -1,0 +1,60 @@
+==============================
+ Phase 11 Acceptance Tests
+ 2026-03-09T23:00:39Z
+ Batch date: 2026-03-09
+==============================
+
+Setup: Flushing Redis to clear stale duplicate-check hashes
+  Redis flushed (DOCKER_HOST=unix:///var/run/docker.sock)
+
+a. Clean-pass deposit 1 (ACC-SOFI-1006, 16998 cents) — assert funds_posted
+  ✓ PASS: deposit 1 reaches funds_posted (got: funds_posted)
+
+b. Clean-pass deposit 2 (ACC-SOFI-0000, 20650 cents) — assert funds_posted
+  ✓ PASS: deposit 2 reaches funds_posted (got: funds_posted)
+
+c. Rejected deposit (ACC-SOFI-1001) — assert rejected, excluded from settlement
+  ✓ PASS: blur deposit is rejected (got: rejected)
+
+d. Trigger settlement for 2026-03-09 — assert deposit_count >= 2
+  ✓ PASS: settlement includes at least 2 deposits (got: 2, want >= 2)
+
+e. Deposit 1 (2f840786-1c8d-45f1-8509-b3aaf0c8168a) — assert status=completed after settlement
+  ✓ PASS: deposit 1 is completed (got: completed)
+  ✓ PASS: deposit 1 has settlement_batch_id (got: 2e36981a-79d1-4e59-a53e-49ee5604a839)
+
+f. Deposit 2 (47675d4c-eba6-469e-8770-76899a4da444) — assert status=completed after settlement
+  ✓ PASS: deposit 2 is completed (got: completed)
+  ✓ PASS: deposit 2 has settlement_batch_id (got: 2e36981a-79d1-4e59-a53e-49ee5604a839)
+
+g. Rejected deposit (643f0bb3-6af3-4552-95fd-a0301ed07570) — assert still rejected (not moved to completed)
+  ✓ PASS: rejected deposit stays rejected (got: rejected)
+
+h. Settlement total_amount_cents (37648) >= AMOUNT1+AMOUNT2 (37648)
+  ✓ PASS: total_amount_cents covers both clean deposits (got: 37648, want >= 37648)
+  ✓ PASS: batch status is submitted (got: submitted)
+
+i. Settlement file path — assert non-empty in batch response
+  ✓ PASS: settlement file_path is present (got: /output/settlement/2026-03-09_batch_1399c7a3-3e2f-432c-857a-1d4acba5b242.json)
+
+j. Second settlement trigger — assert deposit_count=0 (idempotent)
+  ✓ PASS: second trigger finds 0 eligible deposits (got: 0)
+
+k. Submit deposit 3 after settlement (ACC-SOFI-0000, 42157 cents), then trigger again
+  ✓ PASS: deposit 3 reaches funds_posted (got: funds_posted)
+  ✓ PASS: third settlement picks up exactly 1 new deposit (got: 1)
+
+l. Deposit 3 (9f95986b-8e6c-4c33-82be-899502c4831c) — assert status=completed after third settlement
+  ✓ PASS: deposit 3 is completed (got: completed)
+  ✓ PASS: deposit 3 has settlement_batch_id (got: 37a76192-cf72-43ef-841f-d082a5fb1c51)
+
+m. Flagged deposit (ACC-SOFI-1003) operator-approved → included in settlement
+  ✓ PASS: flagged deposit reaches analyzing (got: analyzing)
+  ✓ PASS: flagged deposit is flagged=true (got: true)
+  ✓ PASS: operator-approved deposit reaches funds_posted (got: funds_posted)
+  ✓ PASS: fourth settlement includes operator-approved deposit (got: 1, want >= 1)
+  ✓ PASS: operator-approved deposit is completed after settlement (got: completed)
+
+==============================
+ Results: 22/22 tests passed
+==============================
