@@ -30,6 +30,26 @@ go.work.sum
 
 # env file
 .env
+.env.*
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+
+# macOS
+.DS_Store
+
+# Project-specific
+/backend/tmp/
+/output/
+firebase-debug.log
+
+# Claude AI files
+.claude/
 
 # Editor/IDE
 # .idea/
