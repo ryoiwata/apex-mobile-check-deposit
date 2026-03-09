@@ -1,0 +1,46 @@
+==============================
+ Phase 8 Acceptance Tests
+ 2026-03-09T20:09:31Z
+==============================
+
+a. Health check
+  ✓ PASS: health endpoint returns ok (got: ok)
+
+b. Happy path — clean pass (ACC-SOFI-1006)
+  ✓ PASS: clean pass reaches funds_posted (got: funds_posted)
+
+c. IQA blur rejection (ACC-SOFI-1001)
+  ✓ PASS: blur account is rejected (got: rejected)
+
+d. IQA glare rejection (ACC-SOFI-1002)
+  ✓ PASS: glare account is rejected (got: rejected)
+
+e. MICR failure flagged (ACC-SOFI-1003)
+  ✓ PASS: MICR failure reaches analyzing (got: analyzing)
+  ✓ PASS: MICR failure is flagged (got: true)
+
+f. Duplicate detection (ACC-SOFI-1004)
+  ✓ PASS: duplicate account is rejected (got: rejected)
+
+g. Amount mismatch flagged (ACC-SOFI-1005)
+  ✓ PASS: amount mismatch reaches analyzing (got: analyzing)
+  ✓ PASS: amount mismatch is flagged (got: true)
+  ✓ PASS: flag reason is amount_mismatch (got: amount_mismatch)
+
+h. Auth required — no token returns 401
+  ✓ PASS: missing token returns 401 (got: 401)
+
+i. GET /deposits/:id — state_history present
+  ✓ PASS: GET by ID returns correct status (got: funds_posted)
+  ✓ PASS: state_history is non-empty (length: 4)
+
+j. GET /deposits/:id/images/front — returns HTTP 200
+  ✓ PASS: front image endpoint returns 200 (got: 200)
+
+k. Over-limit rejection (600000 cents — handler validates before service)
+  ✓ PASS: over-limit returns 422 (got: 422)
+  ✓ PASS: over-limit code is DEPOSIT_OVER_LIMIT (got: DEPOSIT_OVER_LIMIT)
+
+==============================
+ Results: 16/16 tests passed
+==============================
