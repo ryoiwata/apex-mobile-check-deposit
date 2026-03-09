@@ -1,0 +1,53 @@
+==============================
+ Phase 10 Acceptance Tests
+ 2026-03-09T20:58:51Z
+==============================
+
+a. MICR-failure deposit (ACC-SOFI-1003) — should be flagged and analyzing
+  ✓ PASS: MICR failure reaches analyzing (got: analyzing)
+  ✓ PASS: MICR failure is flagged (got: true)
+
+b. Amount-mismatch deposit (ACC-SOFI-1005) — should be flagged and analyzing
+  ✓ PASS: amount mismatch reaches analyzing (got: analyzing)
+  ✓ PASS: amount mismatch is flagged (got: true)
+
+c. GET /operator/queue — queue length >= 2
+  ✓ PASS: queue contains at least 2 flagged deposits (got: 13, want >= 2)
+
+d. Approve MICR-failure deposit (6e3e5403-feee-4e16-aca9-78f61700f7f6)
+  ✓ PASS: approved deposit reaches funds_posted (got: funds_posted)
+
+e. GET /operator/queue after approve — length decreased
+  ✓ PASS: queue length decreased by 1 after approve (got: 12)
+
+f. Audit log for approved deposit — action=approve, operator_id=OP-001
+  ✓ PASS: audit log has entries for approved deposit (count: 1)
+  ✓ PASS: audit action is approve (got: approve)
+  ✓ PASS: audit operator_id is OP-001 (got: OP-001)
+
+g. Reject amount-mismatch deposit (768e38d8-7933-495d-a14a-199ea78714d5)
+  ✓ PASS: rejected deposit is now rejected (got: rejected)
+
+h. Audit log for rejected deposit — action=reject, operator_id=OP-001
+  ✓ PASS: audit log has entries for rejected deposit (count: 1)
+  ✓ PASS: audit action is reject (got: reject)
+  ✓ PASS: audit operator_id is OP-001 (got: OP-001)
+
+i. GET /operator/queue after reject — length decreased again
+  ✓ PASS: queue length decreased after reject (got: 11)
+
+j. Approve non-flagged deposit — expect 409 conflict
+  ✓ PASS: clean deposit pre-approved → clean pass status is funds_posted (got: funds_posted)
+  ✓ PASS: approving non-flagged deposit returns 409 (got: 409)
+
+k. GET /operator/queue without X-Operator-ID returns 401
+  ✓ PASS: missing operator header returns 401 (got: 401)
+
+l. Approve flagged deposit with contribution_type_override=EMPLOYER
+  ✓ PASS: MICR deposit for override test is flagged/analyzing (got: analyzing)
+  ✓ PASS: override-approved deposit reaches funds_posted (got: funds_posted)
+  ✓ PASS: contribution_type_override applied to transfer (got: EMPLOYER)
+
+==============================
+ Results: 21/21 tests passed
+==============================
