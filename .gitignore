@@ -2,6 +2,9 @@
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 
+# Untitled files
+*Untitled*
+
 # Claude files
 .claude/tracking/
 

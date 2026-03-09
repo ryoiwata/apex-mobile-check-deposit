@@ -15,6 +15,7 @@ import (
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/middleware"
+	"github.com/apex/mcd/internal/operator"
 	"github.com/apex/mcd/internal/state"
 	"github.com/apex/mcd/internal/vendor"
 )
@@ -123,12 +124,14 @@ func main() {
 	fundingSvc := funding.NewService(sqlDB, rdb)
 	ledgerSvc := ledger.NewService(sqlDB)
 	depositSvc := deposit.NewService(sqlDB, machine, vendorSvc, fundingSvc, ledgerSvc)
+	operatorSvc := operator.NewService(sqlDB, machine, ledgerSvc, fundingSvc)
 
 	// --- Create handlers ---
 	depositHandler := deposit.NewHandler(depositSvc, deposit.Config{
 		ImageStorageDir: cfg.ImageStorageDir,
 		ReturnFeeCents:  cfg.ReturnFeeCents,
 	})
+	operatorHandler := operator.NewHandler(operatorSvc)
 	ledgerHandler := ledger.NewHandler(ledgerSvc)
 
 	// --- Configure Gin router ---
@@ -189,9 +192,16 @@ func main() {
 	}
 
 	// Operator routes (require X-Operator-ID header)
-	// Return endpoint lives here — only operators can trigger returns
-	r.POST("/api/v1/operator/deposits/:id/return",
-		middleware.OperatorAuth(), depositHandler.Return)
+	ops := r.Group("/api/v1/operator")
+	ops.Use(middleware.OperatorAuth())
+	{
+		ops.GET("/queue", operatorHandler.GetQueue)
+		ops.POST("/deposits/:id/approve", operatorHandler.Approve)
+		ops.POST("/deposits/:id/reject", operatorHandler.Reject)
+		ops.GET("/audit", operatorHandler.GetAuditLog)
+		// Return endpoint lives here — only operators can trigger returns
+		ops.POST("/deposits/:id/return", depositHandler.Return)
+	}
 
 	log.Printf("Starting server on :%s", cfg.ServerPort)
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
