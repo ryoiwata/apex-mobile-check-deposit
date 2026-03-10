@@ -53,12 +53,12 @@ i. Check image proxied through frontend — submit deposit, fetch image via http
 ══════════════════════════════════════
 Manual verification required:
 Open http://localhost:5173 in your browser and verify:
-[ ] 4 tabs visible: Deposit, My Deposits, Operator Queue, Ledger
-[ ] Deposit form shows 8 labeled account options in dropdown
-[ ] Submitting a clean-pass deposit shows green "funds_posted" badge
-[ ] Submitting a blur deposit shows red "rejected" badge
-[ ] Operator Queue tab shows flagged deposits with approve/reject buttons
-[ ] Approve/reject updates the queue
-[ ] Ledger tab shows entries for selected account
-[ ] No console errors in browser dev tools (F12)
+[x] 4 tabs visible: Deposit, My Deposits, Operator Queue, Ledger
+[x] Deposit form shows 8 labeled account options in dropdown
+[x] Submitting a clean-pass deposit shows green "funds_posted" badge
+[x] Submitting a blur deposit shows red "rejected" badge
+[x] Operator Queue tab shows flagged deposits with approve/reject buttons
+[x] Approve/reject updates the queue
+[x] Ledger tab shows entries for selected account
+[x] No console errors in browser dev tools (F12)
 ══════════════════════════════════════
