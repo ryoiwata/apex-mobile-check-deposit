@@ -1,0 +1,124 @@
+go: downloading github.com/redis/go-redis/v9 v9.5.1
+go: downloading github.com/lib/pq v1.10.9
+go: downloading github.com/gin-gonic/gin v1.9.1
+go: downloading github.com/google/uuid v1.6.0
+go: downloading github.com/stretchr/testify v1.9.0
+go: downloading gopkg.in/yaml.v3 v3.0.1
+go: downloading github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
+go: downloading github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
+go: downloading github.com/gin-contrib/sse v0.1.0
+go: downloading golang.org/x/net v0.10.0
+go: downloading google.golang.org/protobuf v1.32.0
+go: downloading github.com/mattn/go-isatty v0.0.19
+go: downloading github.com/pelletier/go-toml/v2 v2.0.8
+go: downloading github.com/ugorji/go/codec v1.2.11
+go: downloading github.com/go-playground/validator/v10 v10.14.0
+go: downloading github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
+go: downloading github.com/cespare/xxhash/v2 v2.2.0
+go: downloading golang.org/x/sys v0.17.0
+go: downloading golang.org/x/crypto v0.9.0
+go: downloading github.com/go-playground/universal-translator v0.18.1
+go: downloading github.com/leodido/go-urn v1.2.4
+go: downloading golang.org/x/text v0.14.0
+go: downloading github.com/gabriel-vasile/mimetype v1.4.2
+go: downloading github.com/go-playground/locales v0.14.1
+?   	github.com/apex/mcd/cmd/server	[no test files]
+?   	github.com/apex/mcd/internal/db	[no test files]
+?   	github.com/apex/mcd/internal/deposit	[no test files]
+=== RUN   TestDepositLimit_UnderLimit
+--- PASS: TestDepositLimit_UnderLimit (0.00s)
+=== RUN   TestDepositLimit_AtLimit_500000
+--- PASS: TestDepositLimit_AtLimit_500000 (0.00s)
+=== RUN   TestDepositLimit_OverLimit_500001
+--- PASS: TestDepositLimit_OverLimit_500001 (0.00s)
+=== RUN   TestContributionType_Retirement_Individual
+--- PASS: TestContributionType_Retirement_Individual (0.00s)
+=== RUN   TestContributionType_Individual_Empty
+--- PASS: TestContributionType_Individual_Empty (0.00s)
+=== RUN   TestDuplicateCheck_FirstDeposit_Allowed
+--- PASS: TestDuplicateCheck_FirstDeposit_Allowed (0.01s)
+=== RUN   TestDuplicateCheck_SecondDeposit_Rejected
+--- PASS: TestDuplicateCheck_SecondDeposit_Rejected (0.00s)
+=== RUN   TestAccountResolver_Active_ReturnsOmnibus
+--- PASS: TestAccountResolver_Active_ReturnsOmnibus (0.02s)
+=== RUN   TestAccountResolver_NotFound
+--- PASS: TestAccountResolver_NotFound (0.02s)
+=== RUN   TestAccountResolver_Suspended_Ineligible
+--- PASS: TestAccountResolver_Suspended_Ineligible (0.02s)
+PASS
+ok  	github.com/apex/mcd/internal/funding	0.086s
+?   	github.com/apex/mcd/internal/middleware	[no test files]
+?   	github.com/apex/mcd/internal/models	[no test files]
+=== RUN   TestPostFunds_CreatesDepositEntry
+--- PASS: TestPostFunds_CreatesDepositEntry (0.04s)
+=== RUN   TestPostFunds_CorrectAccountMapping
+--- PASS: TestPostFunds_CorrectAccountMapping (0.02s)
+=== RUN   TestPostReversal_TwoEntries
+--- PASS: TestPostReversal_TwoEntries (0.02s)
+=== RUN   TestPostReversal_CorrectAmounts
+--- PASS: TestPostReversal_CorrectAmounts (0.02s)
+=== RUN   TestPostReversal_SubTypes
+--- PASS: TestPostReversal_SubTypes (0.02s)
+=== RUN   TestLedgerEntries_AppendOnly
+    service_test.go:262: Repository satisfies appendOnlyLedger interface — no Update or Delete methods
+--- PASS: TestLedgerEntries_AppendOnly (0.01s)
+PASS
+ok  	github.com/apex/mcd/internal/ledger	0.141s
+=== RUN   TestApprove_MovesToFundsPosted
+--- PASS: TestApprove_MovesToFundsPosted (0.02s)
+=== RUN   TestApprove_WritesAuditLog
+--- PASS: TestApprove_WritesAuditLog (0.02s)
+=== RUN   TestReject_MovesToRejected
+--- PASS: TestReject_MovesToRejected (0.02s)
+PASS
+ok  	github.com/apex/mcd/internal/operator	0.072s
+=== RUN   TestCutoffTime_CorrectUTCConversion
+--- PASS: TestCutoffTime_CorrectUTCConversion (0.00s)
+=== RUN   TestCutoffTime_DST_Summer
+--- PASS: TestCutoffTime_DST_Summer (0.00s)
+=== RUN   TestSettlement_ExcludesRejected
+--- PASS: TestSettlement_ExcludesRejected (0.02s)
+=== RUN   TestSettlement_ExcludesAlreadyBatched
+--- PASS: TestSettlement_ExcludesAlreadyBatched (0.02s)
+PASS
+ok  	github.com/apex/mcd/internal/settlement	0.051s
+=== RUN   TestValidTransition_RequestedToValidating
+--- PASS: TestValidTransition_RequestedToValidating (0.02s)
+=== RUN   TestValidTransition_CompletedToReturned
+--- PASS: TestValidTransition_CompletedToReturned (0.02s)
+=== RUN   TestInvalidTransitions
+=== RUN   TestInvalidTransitions/requested_to_approved_skips_states
+=== RUN   TestInvalidTransitions/completed_to_approved_is_backwards
+=== RUN   TestInvalidTransitions/rejected_to_funds_posted_is_terminal
+--- PASS: TestInvalidTransitions (0.02s)
+    --- PASS: TestInvalidTransitions/requested_to_approved_skips_states (0.01s)
+    --- PASS: TestInvalidTransitions/completed_to_approved_is_backwards (0.00s)
+    --- PASS: TestInvalidTransitions/rejected_to_funds_posted_is_terminal (0.00s)
+=== RUN   TestInvalidTransition_RequestedToApproved
+--- PASS: TestInvalidTransition_RequestedToApproved (0.01s)
+=== RUN   TestInvalidTransition_CompletedToApproved
+--- PASS: TestInvalidTransition_CompletedToApproved (0.01s)
+=== RUN   TestInvalidTransition_RejectedToFundsPosted
+--- PASS: TestInvalidTransition_RejectedToFundsPosted (0.02s)
+=== RUN   TestOptimisticLock_ConcurrentTransition
+--- PASS: TestOptimisticLock_ConcurrentTransition (0.02s)
+PASS
+ok  	github.com/apex/mcd/internal/state	0.128s
+=== RUN   TestStub_CleanPass_1006
+--- PASS: TestStub_CleanPass_1006 (0.00s)
+=== RUN   TestStub_CleanPass_DefaultSuffix
+--- PASS: TestStub_CleanPass_DefaultSuffix (0.00s)
+=== RUN   TestStub_IQABlur_1001
+--- PASS: TestStub_IQABlur_1001 (0.00s)
+=== RUN   TestStub_IQAGlare_1002
+--- PASS: TestStub_IQAGlare_1002 (0.00s)
+=== RUN   TestStub_MICRFailure_1003_Flagged
+--- PASS: TestStub_MICRFailure_1003_Flagged (0.00s)
+=== RUN   TestStub_DuplicateDetected_1004
+--- PASS: TestStub_DuplicateDetected_1004 (0.00s)
+=== RUN   TestStub_AmountMismatch_1005_Flagged
+--- PASS: TestStub_AmountMismatch_1005_Flagged (0.00s)
+=== RUN   TestStub_Stateless_SameInputSameOutput
+--- PASS: TestStub_Stateless_SameInputSameOutput (0.00s)
+PASS
+ok  	github.com/apex/mcd/internal/vendor	0.002s
