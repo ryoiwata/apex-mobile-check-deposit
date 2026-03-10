@@ -1,0 +1,37 @@
+==============================
+ DEMO: Return / Reversal Flow
+ 2026-03-10T01:45:16Z
+==============================
+
+Setup: Flushing Redis (clears stale duplicate-check hashes)
+  Redis flushed (DOCKER_HOST=unix:///var/run/docker.sock)
+
+Using deposit amount: 17565 cents
+Return fee: 3000 cents ($30.00)
+
+Step 1: Submit clean-pass deposit (ACC-SOFI-1006)
+  Transfer ID : 2e157f9d-b859-4427-a210-0884bec8d3b8
+  Status      : funds_posted
+  ✓ PASS: deposit reaches funds_posted (got: funds_posted)
+
+Step 2: Trigger EOD settlement for 2026-03-10
+  Deposits settled: 1
+  ✓ PASS: settlement includes at least 1 deposit (got: 1, want >= 1)
+  ✓ PASS: deposit is completed after settlement (got: completed)
+
+Step 3: POST /operator/deposits/2e157f9d-b859-4427-a210-0884bec8d3b8/return
+  Return status   : returned
+  Transfer amount : 17565
+  ✓ PASS: transfer moves to returned (got: returned)
+  ✓ PASS: amount_cents on returned transfer matches deposit (got: 17565)
+
+Step 4: GET /ledger/ACC-SOFI-1006 — verify 3 entries (DEPOSIT + REVERSAL + RETURN_FEE)
+  Ledger entries for transfer: 3
+  ✓ PASS: ledger has 3+ entries for transfer (DEPOSIT + REVERSAL + RETURN_FEE)
+  ✓ PASS: DEPOSIT entry amount matches original (got: 17565)
+  ✓ PASS: REVERSAL entry amount matches original (got: 17565)
+  ✓ PASS: RETURN_FEE entry amount is 3000 ($30) (got: 3000)
+
+==============================
+ Results: 9/9 tests passed
+==============================

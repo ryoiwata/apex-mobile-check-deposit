@@ -1,0 +1,40 @@
+==============================
+ DEMO: All Vendor Stub Scenarios
+ 2026-03-10T01:43:55Z
+==============================
+
+Setup: Flushing Redis (clears stale duplicate-check hashes)
+  Redis flushed (DOCKER_HOST=unix:///var/run/docker.sock)
+
+Scenario 1: ACC-SOFI-1001 — IQA Blur (expect: rejected)
+  ✓ PASS: IQA blur account is rejected (got: rejected)
+
+Scenario 2: ACC-SOFI-1002 — IQA Glare (expect: rejected)
+  ✓ PASS: IQA glare account is rejected (got: rejected)
+
+Scenario 3: ACC-SOFI-1003 — MICR Read Failure (expect: analyzing + flagged + micr_failure)
+  ✓ PASS: MICR failure reaches analyzing (got: analyzing)
+  ✓ PASS: MICR failure is flagged=true (got: true)
+  ✓ PASS: flag_reason is micr_failure (got: micr_failure)
+
+Scenario 4: ACC-SOFI-1004 — Duplicate Detected (expect: rejected)
+  ✓ PASS: duplicate account is rejected (got: rejected)
+
+Scenario 5: ACC-SOFI-1005 — Amount Mismatch (expect: analyzing + flagged + amount_mismatch)
+  ✓ PASS: amount mismatch reaches analyzing (got: analyzing)
+  ✓ PASS: amount mismatch is flagged=true (got: true)
+  ✓ PASS: flag_reason is amount_mismatch (got: amount_mismatch)
+
+Scenario 6: ACC-SOFI-1006 — Clean Pass (expect: funds_posted) [amount: 14953]
+  ✓ PASS: clean pass reaches funds_posted (got: funds_posted)
+
+Scenario 7: ACC-SOFI-0000 — Basic Pass (expect: funds_posted) [amount: 28245]
+  ✓ PASS: basic pass reaches funds_posted (got: funds_posted)
+
+Scenario 8: Over-limit deposit (600000 cents — expect: 422 DEPOSIT_OVER_LIMIT)
+  ✓ PASS: over-limit returns HTTP 422 (got: 422)
+  ✓ PASS: over-limit error code is DEPOSIT_OVER_LIMIT (got: DEPOSIT_OVER_LIMIT)
+
+==============================
+ Results: 13/13 tests passed
+==============================

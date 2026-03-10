@@ -1,0 +1,40 @@
+==============================
+ DEMO: Happy Path
+ 2026-03-10T01:43:40Z
+==============================
+
+Setup: Flushing Redis (clears stale duplicate-check hashes)
+  Redis flushed (DOCKER_HOST=unix:///var/run/docker.sock)
+
+Using deposit amount: 29225 cents
+
+Step 1: Submit clean-pass deposit (ACC-SOFI-1006, 29225 cents)
+  Transfer ID : 330f79dc-73a2-49cc-93cd-4f4632ea0866
+  Status      : funds_posted
+  ✓ PASS: deposit reaches funds_posted (got: funds_posted)
+
+Step 2: GET /deposits/330f79dc-73a2-49cc-93cd-4f4632ea0866 — verify state history
+  ✓ PASS: GET by ID returns funds_posted (got: funds_posted)
+  ✓ PASS: state_history is non-empty (length: 4)
+
+Step 3: Trigger EOD settlement for 2026-03-10
+  Batch ID    : 9d5058a7-637a-4af3-ae58-95aa8add2371
+  Deposits    : 3
+  Total cents : 50611
+  Status      : submitted
+  ✓ PASS: settlement batch includes at least 1 deposit (got: 3, want >= 1)
+  ✓ PASS: batch status is submitted (got: submitted)
+
+Step 4: Verify deposit 330f79dc-73a2-49cc-93cd-4f4632ea0866 is now completed
+  Final status       : completed
+  Settlement batch ID: 9d5058a7-637a-4af3-ae58-95aa8add2371
+  ✓ PASS: deposit is now completed (got: completed)
+  ✓ PASS: settlement_batch_id is set (got: 9d5058a7-637a-4af3-ae58-95aa8add2371)
+
+Step 5: GET /ledger/ACC-SOFI-1006 — verify DEPOSIT entry
+  ✓ PASS: ledger has at least 1 entry for transfer 330f79dc-73a2-49cc-93cd-4f4632ea0866 (count: 1)
+  ✓ PASS: DEPOSIT entry amount matches submitted amount (got: 29225)
+
+==============================
+ Results: 9/9 tests passed
+==============================
