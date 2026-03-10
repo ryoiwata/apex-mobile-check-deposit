@@ -4,6 +4,13 @@ A minimal end-to-end mobile check deposit system for brokerage accounts. Investo
 
 Built for the Apex Fintech Services Week 4 technical assessment.
 
+**Documentation:**
+- [Architecture & Data Flows](docs/architecture.md) — service boundaries, state machine, data flow diagrams
+- [Decision Log](docs/decision_log.md) — 20 key decisions with alternatives and trade-offs
+- [Risks & Limitations](docs/risks.md) — known gaps and production path
+- [Scenario Coverage](reports/scenario-coverage.md) — test results and rubric alignment
+- [Submission](SUBMISSION.md) — summary, how to run, evaluation criteria
+
 ## Architecture
 
 ```
