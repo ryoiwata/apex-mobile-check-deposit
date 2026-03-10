@@ -1,0 +1,64 @@
+==============================
+ Phase 13 Acceptance Tests
+ 2026-03-09T23:43:44Z
+==============================
+
+a. Frontend serves HTTP 200 at http://localhost:5173
+  ✓ PASS: frontend HTTP status is 200 (got: 200)
+
+b. Frontend Content-Type contains text/html
+  ✓ PASS: Content-Type contains text/html
+
+c. Frontend HTML contains app title 'Mobile Check Deposit'
+  ✓ PASS: HTML contains 'Mobile Check Deposit'
+
+d. vite.config.js declares /health proxy to backend
+  ✓ PASS: vite.config.js exists (web/vite.config.js)
+  ✓ PASS: vite.config.js declares /health proxy
+  ✓ PASS: vite.config.js proxy targets backend
+
+e. GET http://localhost:5173/api/v1/deposits — Vite /api proxy routes to backend
+  ✓ PASS: proxied GET /api/v1/deposits returns 200 (got: 200)
+
+f. npm run build — no JSX compilation errors
+  ✓ PASS: vite build exits 0
+
+g. All 4 component files exist
+  ✓ PASS: DepositForm.jsx (web/src/components/DepositForm.jsx)
+  ✓ PASS: ReviewQueue.jsx (web/src/components/ReviewQueue.jsx)
+  ✓ PASS: TransferStatus.jsx (web/src/components/TransferStatus.jsx)
+  ✓ PASS: LedgerView.jsx (web/src/components/LedgerView.jsx)
+
+h. api.js contains all required endpoint functions
+  ✓ PASS: api.js exists (web/src/api.js)
+  ✓ PASS: api.js contains submitDeposit
+  ✓ PASS: api.js contains getDeposit
+  ✓ PASS: api.js contains listDeposits
+  ✓ PASS: api.js contains getLedger
+  ✓ PASS: api.js contains getQueue
+  ✓ PASS: api.js contains approveDeposit
+  ✓ PASS: api.js contains rejectDeposit
+  ✓ PASS: api.js contains triggerSettlement
+  ✓ PASS: api.js contains returnDeposit
+  ✓ PASS: api.js contains getAuditLog
+
+i. Check image proxied through frontend — submit deposit, fetch image via http://localhost:5173
+  ✓ PASS: deposit submitted for image proxy test (id: 6632d921-353c-4174-a8b1-93a50611db12, status: rejected)
+  ✓ PASS: front image proxied through frontend returns 200 (got: 200)
+
+==============================
+ Results: 25/25 tests passed
+==============================
+
+══════════════════════════════════════
+Manual verification required:
+Open http://localhost:5173 in your browser and verify:
+[x] 4 tabs visible: Deposit, My Deposits, Operator Queue, Ledger
+[x] Deposit form shows 8 labeled account options in dropdown
+[x] Submitting a clean-pass deposit shows green "funds_posted" badge
+[x] Submitting a blur deposit shows red "rejected" badge
+[x] Operator Queue tab shows flagged deposits with approve/reject buttons
+[x] Approve/reject updates the queue
+[x] Ledger tab shows entries for selected account
+[x] No console errors in browser dev tools (F12)
+══════════════════════════════════════
