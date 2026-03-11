@@ -2,14 +2,24 @@ import { useState } from 'react'
 import { api } from '../api.js'
 
 const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — Clean Pass (Happy Path)' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — IQA Blur (Rejected)' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — IQA Glare (Rejected)' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — MICR Failure (Operator Review)' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — Duplicate (Rejected)' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — Amount Mismatch (Operator Review)' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — Basic Pass' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — Retirement (Contribution Type)' },
+  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage' },
+  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account' },
+  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA' },
+]
+
+const SCENARIOS = [
+  { code: 'CLEAN_PASS',         label: 'Clean Pass',           description: 'All checks pass, MICR data extracted (Happy Path)' },
+  { code: 'IQA_FAIL_BLUR',      label: 'IQA Fail — Blur',      description: 'Image too blurry, prompt retake' },
+  { code: 'IQA_FAIL_GLARE',     label: 'IQA Fail — Glare',     description: 'Glare detected, prompt retake' },
+  { code: 'MICR_READ_FAILURE',  label: 'MICR Read Failure',    description: 'Cannot read MICR line, flags for operator review' },
+  { code: 'DUPLICATE_DETECTED', label: 'Duplicate Detected',   description: 'Check previously deposited, reject' },
+  { code: 'AMOUNT_MISMATCH',    label: 'Amount Mismatch',      description: 'OCR amount differs from entered amount, flags for review' },
+  { code: 'IQA_PASS',           label: 'IQA Pass (basic)',     description: 'Image quality acceptable, proceed normally' },
 ]
 
 const STATUS_STYLES = {
@@ -35,6 +45,7 @@ const STATUS_MESSAGES = {
  */
 export default function DepositForm({ onSuccess }) {
   const [accountId, setAccountId] = useState('ACC-SOFI-1006')
+  const [scenario, setScenario] = useState('CLEAN_PASS')
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [frontFile, setFrontFile] = useState(null)
   const [backFile, setBackFile] = useState(null)
@@ -65,6 +76,7 @@ export default function DepositForm({ onSuccess }) {
     const formData = new FormData()
     formData.append('account_id', accountId)
     formData.append('amount_cents', String(amountCents))
+    formData.append('vendor_scenario', scenario)
     formData.append('front_image', front)
     formData.append('back_image', back)
 
@@ -94,6 +106,25 @@ export default function DepositForm({ onSuccess }) {
   return (
     <div className="max-w-lg">
       <h2 className="text-lg font-semibold text-gray-800 mb-4">Submit Check Deposit</h2>
+
+      {/* Test Configuration Panel — Vendor Service stub control, not investor-facing */}
+      <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1">
+          Vendor Service Stub — Test Scenario
+        </p>
+        <p className="text-xs text-amber-700 mb-3">
+          Controls how the stub responds. Independent of the investor account selected below.
+        </p>
+        <select
+          value={scenario}
+          onChange={e => setScenario(e.target.value)}
+          className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+        >
+          {SCENARIOS.map(s => (
+            <option key={s.code} value={s.code}>{s.label} — {s.description}</option>
+          ))}
+        </select>
+      </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

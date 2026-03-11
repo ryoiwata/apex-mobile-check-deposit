@@ -9,6 +9,11 @@ type Request struct {
 	FrontImageRef       string `json:"front_image_ref"`
 	BackImageRef        string `json:"back_image_ref"`
 	DeclaredAmountCents int64  `json:"declared_amount_cents"`
+	// Scenario explicitly selects the stub response. If empty, the stub falls back
+	// to deriving the scenario from the AccountID suffix (backward compatibility).
+	// Valid values: CLEAN_PASS, IQA_FAIL_BLUR, IQA_FAIL_GLARE, MICR_READ_FAILURE,
+	// DUPLICATE_DETECTED, AMOUNT_MISMATCH, IQA_PASS
+	Scenario string `json:"scenario,omitempty"`
 }
 
 // MICRData represents the extracted MICR line data.

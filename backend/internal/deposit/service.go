@@ -30,6 +30,9 @@ type SubmitRequest struct {
 	DeclaredAmountCents int64
 	FrontImageRef       string // absolute path saved by handler before calling service
 	BackImageRef        string
+	// VendorScenario explicitly controls which stub response is returned.
+	// If empty, the stub falls back to the account ID suffix. Defaults to CLEAN_PASS.
+	VendorScenario string
 }
 
 // Service orchestrates the full deposit pipeline.
@@ -88,6 +91,7 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 		FrontImageRef:       req.FrontImageRef,
 		BackImageRef:        req.BackImageRef,
 		DeclaredAmountCents: transfer.DeclaredAmountCents,
+		Scenario:            req.VendorScenario,
 	}
 	vendorResp, err := s.vendor.Validate(ctx, vendorReq)
 	if err != nil {
