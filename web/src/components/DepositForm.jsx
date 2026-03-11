@@ -38,6 +38,7 @@ export default function DepositForm({ onSuccess }) {
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [frontFile, setFrontFile] = useState(null)
   const [backFile, setBackFile] = useState(null)
+  const [cameraMode, setCameraMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -121,6 +122,27 @@ export default function DepositForm({ onSuccess }) {
           />
         </div>
 
+        <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+          <span className="text-sm font-medium text-gray-700">Image source:</span>
+          <button
+            type="button"
+            onClick={() => setCameraMode(false)}
+            className={`px-3 py-1.5 rounded text-sm font-medium ${!cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+          >
+            📁 Upload File
+          </button>
+          <button
+            type="button"
+            onClick={() => setCameraMode(true)}
+            className={`px-3 py-1.5 rounded text-sm font-medium ${cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+          >
+            📷 Take Photo
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 -mt-3">
+          {cameraMode ? "Opens your phone's rear camera directly" : 'Select an image file from your device'}
+        </p>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Front of Check <span className="text-gray-400 font-normal">(optional — placeholder used if omitted)</span>
@@ -128,6 +150,7 @@ export default function DepositForm({ onSuccess }) {
           <input
             type="file"
             accept="image/*"
+            {...(cameraMode ? { capture: 'environment' } : {})}
             onChange={e => setFrontFile(e.target.files[0] || null)}
             className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
@@ -140,6 +163,7 @@ export default function DepositForm({ onSuccess }) {
           <input
             type="file"
             accept="image/*"
+            {...(cameraMode ? { capture: 'environment' } : {})}
             onChange={e => setBackFile(e.target.files[0] || null)}
             className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
