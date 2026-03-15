@@ -13,7 +13,7 @@ graph TB
         ROUTES["REST Endpoints"]
     end
 
-    subgraph VENDOR["🏦 Vendor Service (Stubbed)"]
+    subgraph VENDOR["🔍 Vendor Service (Stubbed)"]
         direction TB
         VENDOR_API["Vendor API Stub"]
         IQA["Image Quality<br/>Assessment"]
@@ -24,16 +24,23 @@ graph TB
         MICR --> DUPE_V
     end
 
-    subgraph FUNDING["⚙️ Funding Service"]
+    subgraph FUNDING["⚙️ Funding Service (Collect-All)"]
         direction TB
+        SESSION["Session & Auth<br/>Validation"]
         ACCT_RESOLVE["Account Resolver<br/>→ Internal IDs"]
-        BIZ_RULES["Business Rules Engine"]
-        LIMIT["Deposit Limit<br/>Check ≤$5,000"]
-        CONTRIB["Contribution Type<br/>Defaults"]
-        DUPE_F["Duplicate Deposit<br/>Detection"]
+        BIZ_RULES["Collect-All<br/>Rule Engine"]
+        LIMIT["Rule 1: Deposit<br/>Limit ≤$5,000"]
+        CONTRIB["Rule 2: Contribution<br/>Cap Check"]
+        DUPE_F["Rule 3: Duplicate<br/>Deposit Detection"]
+        AGGREGATE["Aggregate ALL<br/>Violations"]
+        SESSION --> ACCT_RESOLVE
+        ACCT_RESOLVE --> BIZ_RULES
         BIZ_RULES --> LIMIT
         BIZ_RULES --> CONTRIB
         BIZ_RULES --> DUPE_F
+        LIMIT --> AGGREGATE
+        CONTRIB --> AGGREGATE
+        DUPE_F --> AGGREGATE
     end
 
     subgraph STATE["🔄 Transfer State Machine"]
@@ -47,9 +54,13 @@ graph TB
     end
 
     subgraph SETTLEMENT["📄 Settlement Engine"]
-        BATCH["EOD Batch Processor<br/>6:30 PM CT Cutoff"]
+        CUTOFF{"EOD Cutoff<br/>6:30 PM CT?"}
+        BATCH["Batch Processor"]
         X9["X9 ICL Generator<br/>(moov-io/imagecashletter)"]
-        ACK["Bank ACK Tracker"]
+        ACK{"Bank ACK<br/>Received?"}
+        CUTOFF -->|Before| BATCH
+        BATCH --> X9
+        X9 --> ACK
     end
 
     subgraph DATA["🗄️ Data Layer"]
@@ -71,30 +82,53 @@ graph TB
 
     %% API → Services
     ROUTES -->|"Submit Deposit"| VENDOR_API
-    ROUTES -->|"Apply Rules"| ACCT_RESOLVE
-    ACCT_RESOLVE --> BIZ_RULES
+    ROUTES -->|"Validate Session"| SESSION
     ROUTES -->|"Review Actions"| SM
-    ROUTES -->|"Generate Settlement"| BATCH
+    ROUTES -->|"Generate Settlement"| CUTOFF
+
+    %% IQA Failure Loop-Back
+    IQA -->|"Fail (Blur/Glare)"| MOBILE
+    linkStyle 8 stroke:#f85149,stroke-dasharray:5
 
     %% Vendor → Funding flow
     DUPE_V -->|"Validation Result"| SM
     SM -->|"Validated"| BIZ_RULES
 
-    %% Funding → Ledger
-    BIZ_RULES -->|"Approved"| LEDGER_SVC
+    %% Collect-All Failure Loop-Back
+    AGGREGATE -->|"ALL Violations<br/>(Collect-All)"| MOBILE
+    linkStyle 11 stroke:#f85149,stroke-dasharray:5
+
+    %% Funding → Ledger (rules pass)
+    AGGREGATE -->|"All Rules Pass"| LEDGER_SVC
     LEDGER_SVC --> TRANSFER_REC
+
+    %% Session Failure Loop-Back
+    SESSION -->|"Auth Fail → Re-auth"| MOBILE
+    linkStyle 14 stroke:#f85149,stroke-dasharray:5
 
     %% State updates
     LEDGER_SVC -->|"FundsPosted"| SM
 
     %% Settlement flow
-    BATCH --> X9
-    X9 -->|"X9 ICL File"| ACK
-    ACK -->|"Completed"| SM
+    CUTOFF -->|"After Cutoff<br/>Roll to Next Day"| CUTOFF
+    linkStyle 16 stroke:#d29922,stroke-dasharray:5
+    ACK -->|"Yes → Completed"| SM
+    ACK -->|"No → Retry"| X9
+    linkStyle 18 stroke:#f85149,stroke-dasharray:5
 
     %% Return flow
     ACK -->|"Return Notification"| REVERSAL
     REVERSAL -->|"Returned"| SM
+    REVERSAL -->|"Notify Investor<br/>→ May Resubmit"| MOBILE
+    linkStyle 21 stroke:#58a6ff,stroke-dasharray:5
+
+    %% Operator Loop-Backs
+    SM -->|"Operator Reject<br/>→ May Resubmit"| MOBILE
+    linkStyle 22 stroke:#58a6ff,stroke-dasharray:5
+
+    %% MICR/Amount Mismatch → Operator
+    MICR -->|"MICR Fail → Flag"| OPERATOR
+    linkStyle 23 stroke:#d29922
 
     %% Data connections
     SM --> PG
@@ -117,9 +151,9 @@ graph TB
     class MOBILE,OPERATOR client
     class AUTH,RATE,ROUTES api
     class VENDOR_API,IQA,MICR,DUPE_V vendor
-    class ACCT_RESOLVE,BIZ_RULES,LIMIT,CONTRIB,DUPE_F funding
+    class SESSION,ACCT_RESOLVE,BIZ_RULES,LIMIT,CONTRIB,DUPE_F,AGGREGATE funding
     class SM state
     class LEDGER_SVC,TRANSFER_REC,REVERSAL ledger
-    class BATCH,X9,ACK settlement
+    class CUTOFF,BATCH,X9,ACK settlement
     class PG,REDIS data
     class DOCKER,GO_SVC,REACT_UI infra

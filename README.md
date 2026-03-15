@@ -1,6 +1,8 @@
 # Mobile Check Deposit System
 
-A minimal end-to-end mobile check deposit system for brokerage accounts. Investors submit check images through a React UI, a stubbed Vendor Service validates images (IQA, MICR/OCR, duplicate detection), a Funding Service enforces business rules and posts to a ledger, operators review flagged deposits, and approved deposits settle via X9 ICL files to a Settlement Bank.
+A minimal end-to-end mobile check deposit system for brokerage accounts. Investors submit check images through a React UI, a stubbed Vendor Service validates images (IQA, MICR/OCR, duplicate detection), a Funding Service enforces business rules using a **collect-all validation approach** and posts to a ledger, operators review flagged deposits, and approved deposits settle via X9 ICL files to a Settlement Bank.
+
+The collect-all approach evaluates every business rule regardless of prior failures and returns the full list of violations at once — preventing the frustrating loop where an investor fixes one issue, resubmits, and immediately hits a different rejection. Every non-terminal error path loops back to allow correction and resubmission.
 
 Built for the Apex Fintech Services Week 4 technical assessment.
 
@@ -16,39 +18,42 @@ Built for the Apex Fintech Services Week 4 technical assessment.
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐     ┌──────────────┐
 │  React UI   │────▶│  Gin Router  │────▶│ Vendor Service  │     │  PostgreSQL  │
-│  (Vite)     │     │  + Middleware │     │  (Stub)         │     │              │
-│             │     │              │     │  IQA / MICR /   │     │  Transfers   │
-│ • Deposit   │     │ • Auth       │     │  OCR / Dupe     │     │  Ledger      │
-│   Form      │     │ • Rate Limit │     └────────┬────────┘     │  Audit Log   │
+│  (Vite)     │◀─ ─ │  + Middleware │     │  (Stub)         │     │              │
+│             │ IQA │              │     │  IQA / MICR /   │     │  Transfers   │
+│ • Deposit   │ fail│ • Auth       │     │  OCR / Dupe     │     │  Ledger      │
+│   Form      │ loop│ • Rate Limit │     └────────┬────────┘     │  Audit Log   │
 │ • Operator  │     │ • Routing    │              │              │  Accounts    │
 │   Dashboard │     └──────┬───────┘              ▼              └──────┬───────┘
 │ • Ledger    │            │              ┌─────────────────┐          │
 │   View      │            ├─────────────▶│ Funding Service │◀─────────┘
-└─────────────┘            │              │                 │
-                           │              │ • Deposit Limits│   ┌──────────────┐
-                           │              │ • Dupe Detection│──▶│    Redis      │
-                           │              │ • Account       │   │              │
-                           │              │   Resolution    │   │ • Rate Limits│
-                           │              └────────┬────────┘   │ • Check Hash │
-                           │                       │            │   Cache      │
-                           │                       ▼            └──────────────┘
-                           │              ┌─────────────────┐
-                           ├─────────────▶│ Ledger Service  │
-                           │              │                 │
-                           │              │ • Post Funds    │
-                           │              │ • Reversals     │
-                           │              │ • Fee Deduction │
-                           │              └────────┬────────┘
-                           │                       │
-                           │                       ▼
-                           │              ┌─────────────────┐
-                           └─────────────▶│  Settlement     │
-                                          │  Engine         │
-                                          │                 │
-                                          │ • EOD Batching  │
-                                          │ • X9 ICL Gen    │
-                                          │ • Bank ACK      │
+└──────┬──────┘            │              │ (COLLECT-ALL)   │
+       │                   │              │                 │   ┌──────────────┐
+       │ ALL violations    │              │ ├ Deposit Limits│──▶│    Redis      │
+       │ returned at once  │              │ ├ Contrib Caps  │   │              │
+       │◀ ─ ─ ─ ─ ─ ─ ─ ─ ┤              │ ├ Dupe Detection│   │ • Rate Limits│
+       │                   │              │ └ Acct Eligib.  │   │ • Check Hash │
+       │                   │              └────────┬────────┘   │   Cache      │
+       │                   │                       │            └──────────────┘
+       │                   │                       ▼
+       │                   │              ┌─────────────────┐
+       │                   ├─────────────▶│ Ledger Service  │
+       │                   │              │                 │
+       │                   │              │ • Post Funds    │
+       │                   │              │ • Reversals     │
+       │                   │              │ • Fee Deduction │
+       │                   │              └────────┬────────┘
+       │                   │                       │
+       │                   │                       ▼
+       │                   │              ┌─────────────────┐
+       │                   └─────────────▶│  Settlement     │
+       │                                  │  Engine         │
+       │◀ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │                 │
+       return + fee notification          │ • EOD Batching  │
+       (loop-back: new deposit)           │ • X9 ICL Gen    │
+                                          │ • Bank ACK/Retry│
                                           └─────────────────┘
+
+─── = data flow    ─ ─ = loop-back / error path
 ```
 
 ### Transfer State Machine
@@ -58,22 +63,26 @@ Requested ──▶ Validating ──▶ Analyzing ──▶ Approved ──▶ 
                   │              │                                           │
                   ▼              ▼                                           ▼
                Rejected      Rejected                                    Returned
-              (IQA fail,    (over limit,                              (bounced check,
-              duplicate)    ineligible)                              reversal + $30 fee)
+              (IQA fail,    (collect-all:                             (bounced check,
+              duplicate)    all violations                           reversal + $30 fee)
+                  │         returned at once)                             │
+                  │              │                                        │
+                  └──────────────┴──── Loop-back: investor may ──────────┘
+                                       resubmit → new Requested
 ```
 
-Deposits flagged by the Vendor Service (MICR failure, amount mismatch) enter `Analyzing` with a `flagged=true` marker and appear in the operator review queue. Operators can approve (→ Approved) or reject (→ Rejected).
+Deposits flagged by the Vendor Service (MICR failure, amount mismatch) enter `Analyzing` with a `flagged=true` marker and appear in the operator review queue. Operators can approve (→ Approved) or reject (→ Rejected). The collect-all approach ensures that when business rules fail, ALL violations are returned in a single response so the investor can fix everything at once. Every error path loops back — IQA failures prompt retake, rule failures allow resubmission, operator rejections allow new deposits, and returned checks allow resubmission with a different check.
 
 ### Data Flow
 
 1. **Investor** submits check images + amount + account ID via React UI
-2. **API Gateway** (Gin) validates input, checks rate limits, authenticates session
-3. **Vendor Service Stub** runs image quality assessment, MICR extraction, OCR, and duplicate detection — returns pass/fail/flagged
-4. **Funding Service** resolves account identifiers, enforces deposit limits ($5,000 max), checks contribution types, runs duplicate detection against Redis
+2. **API Gateway** (Gin) validates input, checks rate limits, authenticates session — session failure loops back for re-authentication
+3. **Vendor Service Stub** runs image quality assessment, MICR extraction, OCR, and duplicate detection — IQA failures (blur/glare) loop back to investor for retake with specific guidance
+4. **Funding Service** validates session, resolves account identifiers, then applies **all business rules in parallel using collect-all approach**: deposit limits ($5,000 max), contribution caps, duplicate detection (Redis). If any rules fail, ALL violations returned at once — investor fixes everything and resubmits (loop-back)
 5. **Ledger Service** creates transfer record (Type: MOVEMENT, SubType: DEPOSIT, TransferType: CHECK) with correct omnibus account mapping
-6. **Operator** reviews flagged items via dashboard — approves or rejects with mandatory audit logging
-7. **Settlement Engine** batches approved deposits at EOD (6:30 PM CT cutoff), generates X9 ICL file via `moov-io/imagecashletter`
-8. **Return handling** — bounced checks trigger reversal postings (original amount + $30 return fee)
+6. **Operator** reviews flagged items via dashboard — can override contribution type, then approves or rejects with mandatory audit logging. Rejection notifies investor who may resubmit (loop-back). Approval proceeds to next queue item (queue cycling loop).
+7. **Settlement Engine** checks EOD cutoff (6:30 PM CT) — late deposits roll to next business day (loop-back). Batches approved deposits, generates X9 ICL file, submits to bank. If bank doesn't acknowledge, retries submission (loop-back).
+8. **Return handling** — bounced checks trigger reversal postings (original amount + $30 return fee), investor notified, may submit new deposit (loop-back)
 
 ## Tech Stack
 
@@ -256,6 +265,8 @@ Full request/response schemas are documented in `.claude/rules/prompts.md`.
 | Language | Go | Java + Spring Boot | Apex is "mostly Golang"; lighter footprint; better concurrency model for this workload |
 | Framework | Gin | Chi, Echo | Largest community; evaluators recognize it; middleware ecosystem |
 | Database | PostgreSQL | SQLite | FK constraints, transactional guarantees for reversals, matches Apex's stack |
+| Rule evaluation | Collect-all (parallel) | Fail-fast (stop at first) | Returns ALL violations at once; prevents frustrating fix-one-resubmit-hit-another loop |
+| Error handling | Loop-back (every path) | Terminal errors | No dead ends; IQA→retake, rules→fix all, reject→resubmit, return→new deposit |
 | Settlement format | moov-io/imagecashletter | Custom X9 parser | Purpose-built Go library; avoid reinventing a niche financial standard |
 | Stub design | Account suffix mapping | Config file, request headers | Deterministic, no code changes needed, self-documenting in tests |
 | Money representation | int64 cents | float64 | Eliminates floating-point rounding; standard practice in financial systems |
@@ -270,15 +281,18 @@ The test suite covers all paths required by the evaluation rubric:
 | # | Test Case | Category |
 |---|-----------|----------|
 | 1 | Happy path end-to-end | Core correctness |
-| 2 | IQA Fail — Blur | Vendor stub |
-| 3 | IQA Fail — Glare | Vendor stub |
-| 4 | MICR Read Failure → operator review | Vendor stub |
+| 2 | IQA Fail — Blur with retake loop-back | Vendor stub |
+| 3 | IQA Fail — Glare with retake loop-back | Vendor stub |
+| 4 | MICR Read Failure → operator review → approve/reject | Vendor stub |
 | 5 | Duplicate Detected | Vendor stub |
-| 6 | Amount Mismatch → flagged | Vendor stub |
-| 7 | Deposit over $5,000 limit | Business rules |
+| 6 | Amount Mismatch → flagged → operator override | Vendor stub |
+| 7 | Deposit over $5,000 limit (collect-all) | Business rules |
 | 8 | Invalid state transitions rejected | State machine |
 | 9 | Reversal with $30 fee calculation | Return handling |
 | 10 | Settlement file contains only approved deposits | Settlement |
+| 11 | Collect-all: multiple simultaneous rule failures | Business rules |
+| 12 | Settlement bank ACK retry loop | Settlement |
+| 13 | EOD cutoff roll-over to next business day | Settlement |
 
 Test results and scenario coverage report: [`reports/`](reports/)
 
@@ -308,7 +322,9 @@ Full risk assessment: [`docs/risks.md`](docs/risks.md)
 ## How Should Apex Evaluate Production Readiness?
 
 1. **State machine correctness** — Verify no deposit can reach `FundsPosted` without passing both vendor validation and funding service business rules. Attempt every invalid state transition and confirm rejection.
-2. **Ledger integrity** — Confirm every posted deposit has a matching ledger entry, every reversal creates exactly two entries (debit + fee), and the sum of all ledger entries for an account matches the reported balance.
-3. **Settlement reconciliation** — Verify the X9 ICL file contains exactly the deposits that should be settled (no rejected, no duplicates, respects EOD cutoff) and that batch totals are mathematically correct.
-4. **Stub coverage** — Confirm all 7 vendor response scenarios produce the correct downstream behavior and that switching between scenarios requires zero code changes.
-5. **Audit completeness** — Verify every operator action (approve, reject, override) is logged with operator ID, timestamp, and the transfer's before/after state.
+2. **Collect-all validation** — Submit a deposit that violates multiple business rules simultaneously (e.g., over $5,000 AND duplicate). Confirm ALL violations are returned in a single response, not just the first one found.
+3. **Loop-back completeness** — Verify every non-terminal error provides a clear re-entry path: IQA failure → retake, rule failure → fix all and resubmit, operator rejection → new deposit, returned check → new deposit, session expiration → re-auth, bank non-ACK → retry.
+4. **Ledger integrity** — Confirm every posted deposit has a matching ledger entry, every reversal creates exactly two entries (debit + fee), and the sum of all ledger entries for an account matches the reported balance.
+5. **Settlement reconciliation** — Verify the X9 ICL file contains exactly the deposits that should be settled (no rejected, no duplicates, respects EOD cutoff) and that batch totals are mathematically correct. Confirm bank ACK retry works on non-acknowledgment.
+6. **Stub coverage** — Confirm all 7 vendor response scenarios produce the correct downstream behavior and that switching between scenarios requires zero code changes.
+7. **Audit completeness** — Verify every operator action (approve, reject, contribution type override) is logged with operator ID, timestamp, and the transfer's before/after state.

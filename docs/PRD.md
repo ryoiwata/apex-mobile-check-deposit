@@ -12,6 +12,8 @@
 
 This document defines the requirements for a minimal end-to-end mobile check deposit system that enables investors to deposit checks into brokerage accounts via a mobile application. The system handles the full deposit lifecycle — image capture, vendor validation, business rule enforcement, ledger posting, operator review, settlement, and return/reversal — with a stubbed vendor integration that supports deterministic scenario testing.
 
+The Funding Service uses a **collect-all validation approach** that evaluates every business rule regardless of prior failures and returns the full list of violations in a single response. This prevents the frustrating UX loop where an investor fixes one issue, resubmits, and immediately hits a different rejection they weren't told about. Every non-terminal error path loops back to allow the investor to correct and resubmit — no failure is a dead end.
+
 The system is built for Apex Fintech Services, a B2B API-driven fintech that provides trading, clearing, and custody infrastructure to broker-dealers including SoFi, Webull, Coinbase, and CashApp. The technical assessment evaluates system design, correctness, and production-oriented thinking against a 100-point rubric.
 
 ---
@@ -98,9 +100,14 @@ The system is a single Go binary with clearly separated internal packages:
 │  Vendor  │ Funding  │  Ledger  │ Operator │ Settlement  │
 │  Stub    │ Service  │ Service  │ Service  │ Engine      │
 │          │          │          │          │             │
-│ IQA/MICR │ Rules    │ Posting  │ Review   │ X9 ICL Gen  │
-│ OCR/Dupe │ Limits   │ Reversal │ Audit    │ EOD Batch   │
-│          │ Accounts │ Fees     │ Queue    │ Bank ACK    │
+│ IQA/MICR │ Session  │ Posting  │ Review   │ X9 ICL Gen  │
+│ OCR/Dupe │ Validate │ Reversal │ Audit    │ EOD Batch   │
+│          │ COLLECT- │ Fees     │ Queue    │ Bank ACK    │
+│ Loop:    │ ALL:     │          │ Contrib  │ Retry Loop  │
+│ IQA fail │ ├Limits  │          │ Override │             │
+│ →retake  │ ├Contrib │          │ Loop:    │ Loop:       │
+│          │ ├DupChk  │          │ reject → │ no ACK →    │
+│          │ └AcctElg │          │ resubmit │ retry       │
 ├──────────┴──────────┴──────────┴──────────┴─────────────┤
 │              State Machine (Transfer Lifecycle)           │
 ├─────────────────────────┬───────────────────────────────┤
@@ -117,6 +124,12 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
                   │               │                                          │
                   ▼               ▼                                          ▼
                Rejected       Rejected                                    Returned
+
+Loop-back paths (new deposit, not state transition):
+  IQA fail ────(retake photo)─────→ new Requested
+  Rule fail ───(fix ALL issues)───→ new Requested    ◀── Collect-All
+  Rejected ────(investor resubmits)→ new Requested
+  Returned ────(new check)────────→ new Requested
 ```
 
 | State | Description | Entry Condition |
@@ -136,33 +149,36 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 |------|----|---------|
 | Requested | Validating | Deposit submitted to vendor |
 | Validating | Analyzing | Vendor returned pass or flagged |
-| Validating | Rejected | Vendor returned fail (IQA, duplicate) |
-| Analyzing | Approved | Business rules passed |
-| Analyzing | Rejected | Business rules failed or operator rejected |
+| Validating | Rejected | Vendor returned fail (IQA, duplicate); investor may retake/resubmit (loop-back) |
+| Analyzing | Approved | All business rules passed (collect-all: zero violations) |
+| Analyzing | Rejected | Business rules failed (collect-all: one or more violations returned) or operator rejected; investor may resubmit (loop-back) |
 | Approved | FundsPosted | Ledger entry created |
-| FundsPosted | Completed | Settlement batch acknowledged |
-| Completed | Returned | Check bounced post-settlement |
+| FundsPosted | Completed | Settlement batch acknowledged by bank |
+| Completed | Returned | Check bounced post-settlement; investor may submit new deposit (loop-back) |
 
 ### 6.3 Data Flow: Happy Path
 
 1. **Investor** submits check images + amount + account ID via React UI or API
 2. **API Gateway** validates input, checks rate limits, authenticates session
-3. **Transfer** created in `Requested` state → Postgres
-4. **Vendor Stub** performs IQA, MICR extraction, OCR, duplicate check → returns `pass`
-5. **State** transitions: Requested → Validating → Analyzing
-6. **Funding Service** resolves account, checks deposit limit ($5,000), checks for duplicates in Redis, validates account eligibility
-7. **State** transitions: Analyzing → Approved
-8. **Ledger Service** creates transfer record (Type: MOVEMENT, SubType: DEPOSIT, TransferType: CHECK) with omnibus account mapping
-9. **State** transitions: Approved → FundsPosted
-10. **Settlement Engine** batches deposit into X9 ICL file at EOD (6:30 PM CT cutoff)
-11. **State** transitions: FundsPosted → Completed
+3. **Session validation**: Funding Service validates investor session and account eligibility. On failure, investor is prompted to re-authenticate (loop-back to retry).
+4. **Transfer** created in `Requested` state → Postgres
+5. **Vendor Stub** performs IQA, MICR extraction, OCR, duplicate check → returns `pass`. On IQA failure (blur/glare), investor receives specific retake guidance (loop-back to capture step).
+6. **State** transitions: Requested → Validating → Analyzing
+7. **Funding Service** resolves account, then applies **all business rules in parallel using collect-all approach**: deposit limit ($5,000), contribution cap check, duplicate detection in Redis, account eligibility. If any rules fail, ALL violations are returned at once so the investor can fix everything in one correction cycle (loop-back to submission step).
+8. **State** transitions: Analyzing → Approved
+9. **Ledger Service** creates transfer record (Type: MOVEMENT, SubType: DEPOSIT, TransferType: CHECK) with omnibus account mapping
+10. **State** transitions: Approved → FundsPosted
+11. **Settlement Engine** batches deposit into X9 ICL file at EOD (6:30 PM CT cutoff). Deposits after cutoff roll to next business day (loop-back to next EOD cycle).
+12. **Settlement Bank** submission with acknowledgment tracking. If bank does not acknowledge, retry submission (loop-back to bank submission step).
+13. **State** transitions: FundsPosted → Completed
 
 ### 6.4 Data Flow: Return/Reversal
 
 1. **Return notification** received (simulated via API)
 2. **Ledger Service** creates two reversal entries: debit original amount + debit $30 return fee
 3. **State** transitions: Completed → Returned
-4. **Investor** notified of returned check and fee
+4. **Investor** notified of returned check and fee deduction
+5. **Loop-back**: Investor may initiate a new deposit with a different check → re-enters at the capture step
 
 ---
 
@@ -175,7 +191,7 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 | DEP-01 | Accept check deposit via API or UI | POST /api/v1/deposits accepts front_image, back_image, amount_cents, account_id |
 | DEP-02 | Validate input before processing | Reject: missing fields (400), negative/zero amount (400), amount > $5,000 (422), invalid account (422) |
 | DEP-03 | Create transfer in Requested state | Transfer record persisted to Postgres with UUID, timestamps |
-| DEP-04 | Support re-submission on IQA failure | Error response includes actionable message; investor can retry with new images |
+| DEP-04 | Support re-submission on IQA failure | Error response includes actionable message (blur/glare/etc.); investor can retake photo with guidance and resubmit (loop-back to capture step) |
 | DEP-05 | Rate limit submissions | Max 10 deposits/minute per account via Redis counter |
 
 ### 7.2 Vendor Service Stub (P0)
@@ -189,13 +205,17 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 
 ### 7.3 Funding Service (P0)
 
+The Funding Service uses a **collect-all validation approach**: every business rule is evaluated regardless of prior failures, and the complete list of violations is returned in a single response. This prevents the frustrating loop where an investor fixes one issue, resubmits, and immediately hits a different rejection.
+
 | ID | Requirement | Acceptance Criteria |
 |----|------------|-------------------|
-| FND-01 | Enforce $5,000 deposit limit | Deposits > 500000 cents rejected; transfer moves to Rejected |
+| FND-01 | Enforce $5,000 deposit limit | Deposits > 500000 cents flagged as violation; included in collect-all response |
 | FND-02 | Resolve account to internal IDs | Account identifier maps to internal account + correspondent omnibus account |
-| FND-03 | Detect duplicate deposits | Redis hash of (routing + account + amount + serial) with 90-day TTL; reject if exists |
+| FND-03 | Detect duplicate deposits | Redis hash of (routing + account + amount + serial) with 90-day TTL; flagged as violation if exists |
 | FND-04 | Default contribution type for retirement accounts | Retirement-type accounts default to INDIVIDUAL contribution type |
-| FND-05 | Validate account eligibility | Account must exist and be in `active` status |
+| FND-05 | Validate account eligibility | Account must exist and be in `active` status; flagged as violation if not |
+| FND-06 | Collect-all rule evaluation | ALL rules (FND-01, FND-03, FND-05) evaluated regardless of individual failures; complete violation list returned in single response |
+| FND-07 | Validate investor session | Session/auth validated before rule evaluation; on failure, prompt re-authentication (loop-back) |
 
 ### 7.4 Ledger Posting (P0)
 
@@ -210,20 +230,23 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 
 | ID | Requirement | Acceptance Criteria |
 |----|------------|-------------------|
-| OPR-01 | Review queue shows flagged deposits | Flagged deposits visible with check images, MICR data, confidence scores, amount comparison |
+| OPR-01 | Review queue shows flagged deposits | Flagged deposits visible with check images, MICR data, confidence scores, amount comparison, risk indicators |
 | OPR-02 | Approve/reject with mandatory logging | Every action recorded with operator_id, action, timestamp, notes, transfer_id |
 | OPR-03 | Filter and search | Filter by date range, status, account_id, amount range |
-| OPR-04 | Override contribution type | Operator can change contribution type default during approval |
+| OPR-04 | Contribution type override as separate decision | Before approve/reject, operator can view and optionally change contribution type default; override is a distinct UI step |
 | OPR-05 | Audit log viewable | All operator actions queryable with full history per transfer |
+| OPR-06 | Queue cycling | After completing review of one item, operator returns to queue; system checks if more items exist and loops back to selection |
+| OPR-07 | Rejection loop-back | Rejected deposits notify investor; investor may resubmit a new deposit (loop-back to capture step) |
 
 ### 7.6 Settlement (P0)
 
 | ID | Requirement | Acceptance Criteria |
 |----|------------|-------------------|
 | SET-01 | Generate X9 ICL file (or JSON equivalent) | File contains MICR data, image references, amounts, batch metadata for all FundsPosted deposits |
-| SET-02 | Enforce EOD cutoff | Deposits after 6:30 PM CT excluded from current batch; rolled to next business day |
+| SET-02 | Enforce EOD cutoff with roll-over | Deposits after 6:30 PM CT excluded from current batch; rolled to next business day batch (loop-back to next EOD cycle) |
 | SET-03 | Track batch status | Settlement batch record with deposit count, total amount, file path, bank acknowledgment status |
 | SET-04 | Exclude rejected deposits | Invariant: no settlement file includes deposits in Rejected or Returned state |
+| SET-05 | Bank acknowledgment with retry | Track bank ACK; if not acknowledged, retry submission (loop-back to bank submission step); escalate to operations after configurable retries |
 
 ### 7.7 Return/Reversal Handling (P0)
 
@@ -234,6 +257,7 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 | RET-03 | Transition to Returned | Transfer state moves from Completed to Returned |
 | RET-04 | Only completed deposits can be returned | Return request on non-Completed transfer returns 409 |
 | RET-05 | Fee amount is configurable | Return fee set via RETURN_FEE_CENTS environment variable (default 3000) |
+| RET-06 | Investor notification and loop-back | Investor notified of return and fee; may initiate a new deposit with a different check (loop-back to capture step) |
 
 ### 7.8 Observability (P1)
 
@@ -398,13 +422,18 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 
 ## 11. Business Rules
 
+All business rules are evaluated using the **collect-all approach** — every rule runs regardless of prior failures, and the complete list of violations is returned at once.
+
 | Rule | Condition | Action |
 |------|-----------|--------|
-| Deposit Limit | amount_cents > 500000 | Reject; transition to Rejected; reason: over_limit |
-| Duplicate Check (Funding) | SHA256(routing + account + amount + serial) exists in Redis with TTL < 90 days | Reject; reason: duplicate_funding |
-| Account Eligibility | Account status != active | Reject; reason: account_ineligible |
-| Contribution Type Default | Account type = retirement | Set contribution type to INDIVIDUAL |
-| EOD Cutoff | Deposit submitted after 6:30 PM CT | Rolls to next business day batch |
+| Deposit Limit | amount_cents > 500000 | Flag as violation; include in collect-all response |
+| Contribution Cap | Contribution exceeds annual cap for account type | Flag as violation; include in collect-all response |
+| Duplicate Check (Funding) | SHA256(routing + account + amount + serial) exists in Redis with TTL < 90 days | Flag as violation; include in collect-all response |
+| Account Eligibility | Account status != active | Flag as violation; include in collect-all response |
+| Contribution Type Default | Account type = retirement | Set contribution type to INDIVIDUAL (operator may override) |
+| EOD Cutoff | Deposit submitted after 6:30 PM CT | Rolls to next business day batch (loop-back) |
+| **Aggregate** | **Any violations collected** | **Reject; transition to Rejected; return ALL violations in single response** |
+| **All Pass** | **Zero violations** | **Proceed to Approved → FundsPosted** |
 
 ---
 
@@ -428,15 +457,18 @@ Requested ──→ Validating ──→ Analyzing ──→ Approved ──→ 
 | # | Test | Category | Points |
 |---|------|----------|--------|
 | 1 | Happy path end-to-end | Core correctness | 25 |
-| 2 | IQA Fail — Blur (account `*1001`) | Vendor stub | 15 |
-| 3 | IQA Fail — Glare (account `*1002`) | Vendor stub | 15 |
-| 4 | MICR Read Failure → operator review | Vendor stub | 15 |
+| 2 | IQA Fail — Blur (account `*1001`) with retake loop-back | Vendor stub | 15 |
+| 3 | IQA Fail — Glare (account `*1002`) with retake loop-back | Vendor stub | 15 |
+| 4 | MICR Read Failure → operator review → approve/reject | Vendor stub | 15 |
 | 5 | Duplicate Detected | Vendor stub | 15 |
-| 6 | Amount Mismatch → flagged | Vendor stub | 15 |
-| 7 | Deposit over $5,000 limit | Business rules | 25 |
+| 6 | Amount Mismatch → flagged → operator override | Vendor stub | 15 |
+| 7 | Deposit over $5,000 limit (collect-all returns all violations) | Business rules | 25 |
 | 8 | Invalid state transitions rejected | State machine | 25 |
-| 9 | Reversal with $30 fee calculation | Return handling | 10 |
+| 9 | Reversal with $30 fee calculation + investor notification | Return handling | 10 |
 | 10 | Settlement file contains only approved deposits | Settlement | 25 |
+| 11 | Collect-all: multiple simultaneous rule failures returned at once | Business rules | 15 |
+| 12 | Settlement bank ACK retry loop on non-acknowledgment | Settlement | 10 |
+| 13 | EOD cutoff roll-over to next business day | Settlement | 10 |
 
 ### 13.2 Testing Approach
 
@@ -516,9 +548,12 @@ The project is considered successful when:
 4. No deposit reaches FundsPosted without passing both vendor validation and business rules
 5. Reversal of a completed deposit creates correct ledger entries (original debit + $30 fee debit) and transitions to Returned
 6. Settlement file contains exactly the approved deposits, excludes rejected/returned, and respects EOD cutoff
-7. Operator can review, approve, and reject flagged deposits with all actions logged
-8. All 10+ tests pass and a test report is generated in /reports
+7. Operator can review, approve, and reject flagged deposits with all actions logged; contribution type override works as a separate decision step
+8. All 13+ tests pass and a test report is generated in /reports
 9. README, decision log, and architecture doc are complete and accurate
+10. **Collect-all validation**: When multiple business rules fail simultaneously, ALL violations are returned in a single response — not just the first failure
+11. **Loop-back paths**: Every non-terminal error state provides a clear re-entry path (IQA retake, rule fix and resubmit, operator rejection → new deposit, return → new deposit)
+12. **Settlement retry**: Bank non-acknowledgment triggers retry loop, not silent failure
 
 ---
 
