@@ -66,6 +66,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
   const [amountTouched, setAmountTouched] = useState(false)
   // Account field inline validation
   const [accountError, setAccountError] = useState(null)
+  const [accountWarning, setAccountWarning] = useState(null)
   // General violations that don't map to a specific field
   const [generalViolations, setGeneralViolations] = useState([])
 
@@ -88,10 +89,22 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     setAmountError(validateAmount(amountDollars))
   }
 
+  function handleAccountChange(e) {
+    const id = e.target.value
+    setAccountId(id)
+    setAccountError(null)
+    const acct = ACCOUNTS.find(a => a.id === id)
+    if (acct?.status === 'suspended') {
+      setAccountWarning('This account is currently suspended — deposits will be rejected.')
+    } else if (acct?.status === 'closed') {
+      setAccountWarning('This account is closed — deposits will be rejected.')
+    } else {
+      setAccountWarning(null)
+    }
+  }
+
   const isAmountValid = !validateAmount(amountDollars)
-  const selectedAccount = ACCOUNTS.find(a => a.id === accountId)
-  const isAccountValid = !selectedAccount || selectedAccount.status === 'active'
-  const canSubmit = isAmountValid && isAccountValid && !loading
+  const canSubmit = isAmountValid && !loading
 
   function resetImageState() {
     setFrontFile(null)
@@ -114,6 +127,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     setNeedsReauth(false)
     setAmountError(null)
     setAccountError(null)
+    setAccountWarning(null)
     setGeneralViolations([])
 
     const amountCents = Math.round(parseFloat(amountDollars) * 100)
@@ -170,6 +184,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
             setAmountTouched(true)
             setAmountError(v.message || 'Deposits are limited to $5,000.00 per check.')
           } else if (v.code === 'account_ineligible') {
+            setAccountWarning(null)
             setAccountError(v.message)
           } else {
             general.push(v)
@@ -276,15 +291,25 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
           <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
           <select
             value={accountId}
-            onChange={e => { setAccountId(e.target.value); setAccountError(null) }}
+            onChange={handleAccountChange}
             className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 ${accountError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'}`}
           >
             {ACCOUNTS.map(a => (
-              <option key={a.id} value={a.id} disabled={a.status !== 'active'}>
+              <option
+                key={a.id}
+                value={a.id}
+                style={a.status !== 'active' ? { color: '#9ca3af', fontStyle: 'italic' } : undefined}
+              >
                 {a.label}{a.status !== 'active' ? ` (${a.status})` : ''}
               </option>
             ))}
           </select>
+          {accountWarning && !accountError && (
+            <div className="mt-1.5 flex items-start gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+              <span className="shrink-0">⚠️</span>
+              <span>{accountWarning}</span>
+            </div>
+          )}
           {accountError && (
             <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1">
               <span>⚠</span> {accountError}
