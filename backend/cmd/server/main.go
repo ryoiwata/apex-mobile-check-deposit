@@ -193,6 +193,9 @@ func main() {
 		})
 	})
 
+	// Image serving — no auth required (UUIDs are not guessable; browser <img> tags can't send headers)
+	r.GET("/api/v1/deposits/:id/images/:side", depositHandler.ServeImage)
+
 	// Investor routes (require Bearer token)
 	inv := r.Group("/api/v1")
 	inv.Use(middleware.InvestorAuth(cfg.InvestorToken))
@@ -200,7 +203,6 @@ func main() {
 		inv.POST("/deposits", middleware.RateLimit(rdb, 10), depositHandler.Submit)
 		inv.GET("/deposits", depositHandler.List)
 		inv.GET("/deposits/:id", depositHandler.GetByID)
-		inv.GET("/deposits/:id/images/:side", depositHandler.ServeImage)
 		inv.GET("/ledger/:account_id", ledgerHandler.GetByAccount)
 	}
 

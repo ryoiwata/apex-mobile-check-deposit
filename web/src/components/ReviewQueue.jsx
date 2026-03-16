@@ -135,7 +135,7 @@ function CheckCard({ deposit, onAction }) {
               src={`/api/v1/deposits/${id}/images/front`}
               alt="Check front"
               className="w-48 border border-gray-200 rounded"
-              onError={e => { e.target.style.display = 'none' }}
+              onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
             />
           </div>
           <div>
@@ -144,7 +144,7 @@ function CheckCard({ deposit, onAction }) {
               src={`/api/v1/deposits/${id}/images/back`}
               alt="Check back"
               className="w-48 border border-gray-200 rounded"
-              onError={e => { e.target.style.display = 'none' }}
+              onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
             />
           </div>
         </div>
