@@ -144,7 +144,7 @@ func main() {
 	// CORS for local development (frontend on :5173)
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Operator-ID")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
@@ -201,6 +201,7 @@ func main() {
 		ops.GET("/queue", operatorHandler.GetQueue)
 		ops.POST("/deposits/:id/approve", operatorHandler.Approve)
 		ops.POST("/deposits/:id/reject", operatorHandler.Reject)
+		ops.PATCH("/deposits/:id/contribution-type", operatorHandler.OverrideContributionType)
 		ops.GET("/audit", operatorHandler.GetAuditLog)
 		// Return endpoint lives here — only operators can trigger returns
 		ops.POST("/deposits/:id/return", depositHandler.Return)

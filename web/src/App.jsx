@@ -14,10 +14,18 @@ const TABS = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('deposit')
   const [transferId, setTransferId] = useState(null)
+  // Preserved account ID so "Start New Deposit" after a return can pre-select the account
+  const [returnAccountId, setReturnAccountId] = useState(null)
 
   function handleDepositSuccess(id) {
     setTransferId(id)
     setActiveTab('status')
+  }
+
+  function handleStartNewDeposit(accountId) {
+    setReturnAccountId(accountId)
+    setTransferId(null)
+    setActiveTab('deposit')
   }
 
   return (
@@ -47,10 +55,16 @@ export default function App() {
 
       <main className="max-w-5xl mx-auto px-6 py-6">
         {activeTab === 'deposit' && (
-          <DepositForm onSuccess={handleDepositSuccess} />
+          <DepositForm
+            onSuccess={handleDepositSuccess}
+            initialAccountId={returnAccountId}
+          />
         )}
         {activeTab === 'status' && (
-          <TransferStatus initialTransferId={transferId} />
+          <TransferStatus
+            initialTransferId={transferId}
+            onStartNewDeposit={handleStartNewDeposit}
+          />
         )}
         {activeTab === 'queue' && <ReviewQueue />}
         {activeTab === 'ledger' && <LedgerView />}

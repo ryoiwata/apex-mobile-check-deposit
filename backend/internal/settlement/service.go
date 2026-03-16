@@ -14,14 +14,16 @@ import (
 
 // Batch represents a settlement batch record, mapping 1:1 to settlement_batches table.
 type Batch struct {
-	ID               uuid.UUID `json:"batch_id"`
-	BatchDate        time.Time `json:"batch_date"`
-	FilePath         *string   `json:"file_path,omitempty"`
-	DepositCount     int       `json:"deposit_count"`
-	TotalAmountCents int64     `json:"total_amount_cents"`
-	Status           string    `json:"status"`
-	BankReference    *string   `json:"bank_reference,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                      uuid.UUID `json:"batch_id"`
+	BatchDate               time.Time `json:"batch_date"`
+	FilePath                *string   `json:"file_path,omitempty"`
+	DepositCount            int       `json:"deposit_count"`
+	TotalAmountCents        int64     `json:"total_amount_cents"`
+	Status                  string    `json:"status"`
+	BankReference           *string   `json:"bank_reference,omitempty"`
+	DepositsRolledToNextDay int       `json:"deposits_rolled_to_next_day,omitempty"`
+	NextSettlementDate      *string   `json:"next_settlement_date,omitempty"`
+	CreatedAt               time.Time `json:"created_at"`
 }
 
 // Service handles EOD batch settlement processing.
@@ -86,6 +88,34 @@ func (s *Service) getEligibleDeposits(ctx context.Context, cutoff time.Time) ([]
 	return transfers, rows.Err()
 }
 
+// countDepositsAfterCutoff returns the number of FundsPosted deposits created after the cutoff
+// that have no settlement batch assigned — these are queued for the next business day.
+func (s *Service) countDepositsAfterCutoff(ctx context.Context, cutoff time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM transfers
+		WHERE status = 'funds_posted'
+		  AND created_at > $1
+		  AND settlement_batch_id IS NULL`,
+		cutoff).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("settlement: counting post-cutoff deposits: %w", err)
+	}
+	return n, nil
+}
+
+// nextBusinessDay returns the next business day (Mon-Fri) after date.
+func nextBusinessDay(date time.Time) time.Time {
+	next := date.AddDate(0, 0, 1)
+	switch next.Weekday() {
+	case time.Saturday:
+		return next.AddDate(0, 0, 2)
+	case time.Sunday:
+		return next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
 // RunSettlement executes the EOD batch settlement for the given date.
 //
 // Processing order:
@@ -98,22 +128,43 @@ func (s *Service) getEligibleDeposits(ctx context.Context, cutoff time.Time) ([]
 //  7. Update batch record with final counts and mark 'submitted'
 func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batch, error) {
 	cutoff := CutoffTime(batchDate)
+	now := time.Now().UTC()
+
+	// Count deposits queued for next business day (created after today's cutoff).
+	// Always computed so the response is informative even when batching today's deposits.
+	rolledCount := 0
+	if now.After(cutoff) {
+		var err error
+		rolledCount, err = s.countDepositsAfterCutoff(ctx, cutoff)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	transfers, err := s.getEligibleDeposits(ctx, cutoff)
 	if err != nil {
 		return nil, err
 	}
 
-	// No eligible deposits — return a zero-deposit result without creating a DB record.
+	// No eligible deposits for today's cutoff window.
 	if len(transfers) == 0 {
-		return &Batch{
+		result := &Batch{
 			ID:               uuid.New(),
 			BatchDate:        batchDate,
 			DepositCount:     0,
 			TotalAmountCents: 0,
-			Status:           "submitted",
 			CreatedAt:        time.Now().UTC(),
-		}, nil
+		}
+		if rolledCount > 0 {
+			nextDay := nextBusinessDay(batchDate)
+			nextDayStr := nextDay.Format("2006-01-02")
+			result.Status = "rolled_to_next_day"
+			result.NextSettlementDate = &nextDayStr
+			result.DepositsRolledToNextDay = rolledCount
+		} else {
+			result.Status = "submitted"
+		}
+		return result, nil
 	}
 
 	// Create the batch record in pending status before generating the file.
@@ -181,6 +232,12 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 	batch.TotalAmountCents = totalCents
 	batch.FilePath = &filePath
 	batch.Status = "submitted"
+	batch.DepositsRolledToNextDay = rolledCount
+	if rolledCount > 0 {
+		nextDay := nextBusinessDay(batchDate)
+		nextDayStr := nextDay.Format("2006-01-02")
+		batch.NextSettlementDate = &nextDayStr
+	}
 
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE settlement_batches

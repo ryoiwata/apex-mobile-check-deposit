@@ -72,6 +72,7 @@ func iqaFailBlur(txID string) *Response {
 	return &Response{
 		Status:         "fail",
 		IQAResult:      "fail_blur",
+		RetakeGuidance: "Image is too blurry. Hold the phone steady and ensure the check is in focus before capturing.",
 		DuplicateCheck: "clear",
 		TransactionID:  txID,
 		ErrorCode:      &code,
@@ -84,6 +85,7 @@ func iqaFailGlare(txID string) *Response {
 	return &Response{
 		Status:         "fail",
 		IQAResult:      "fail_glare",
+		RetakeGuidance: "Glare detected on check image. Move to a location with even lighting and avoid direct light sources.",
 		DuplicateCheck: "clear",
 		TransactionID:  txID,
 		ErrorCode:      &code,

@@ -124,6 +124,47 @@ func (h *Handler) Reject(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": transfer})
 }
 
+// OverrideContributionType changes the contribution type on a flagged deposit before approval.
+// PATCH /api/v1/operator/deposits/:id/contribution-type
+func (h *Handler) OverrideContributionType(c *gin.Context) {
+	transferID, ok := parseTransferID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		ContributionType string `json:"contribution_type" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "contribution_type is required",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	operatorID, _ := c.Get("operator_id")
+	opID, _ := operatorID.(string)
+
+	transfer, err := h.svc.OverrideContributionType(c.Request.Context(), transferID, opID, body.ContributionType)
+	if err != nil {
+		if errors.Is(err, models.ErrTransferNotReviewable) || errors.Is(err, models.ErrTransferNotFound) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": err.Error(),
+				"code":  "INVALID_STATE_TRANSITION",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to override contribution type",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": transfer})
+}
+
 // GetAuditLog returns audit log entries, optionally filtered by transfer_id.
 // GET /api/v1/operator/audit?transfer_id=<uuid>
 func (h *Handler) GetAuditLog(c *gin.Context) {

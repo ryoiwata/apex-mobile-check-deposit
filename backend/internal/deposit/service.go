@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/apex/mcd/internal/funding"
@@ -101,13 +102,19 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 	// 4. Store vendor result on transfer
 	s.updateTransferVendorData(ctx, transfer, vendorResp)
 
-	// 5. Handle vendor failure
+	// 5. Handle vendor failure — populate retake guidance for IQA failures
 	if vendorResp.Status == "fail" {
 		tx, _ := s.machine.BeginAndTransition(ctx, transfer.ID,
 			models.StatusValidating, models.StatusRejected, "system",
 			map[string]any{"vendor_error": vendorResp.ErrorCode})
 		tx.Commit()
 		transfer.Status = models.StatusRejected
+		if vendorResp.RetakeGuidance != "" {
+			transfer.RetakeGuidance = &vendorResp.RetakeGuidance
+		}
+		if vendorResp.ErrorCode != nil {
+			transfer.VendorErrorCode = vendorResp.ErrorCode
+		}
 		return transfer, nil
 	}
 
@@ -154,6 +161,11 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 			map[string]any{"rule_failure": err.Error()})
 		tx.Commit()
 		transfer.Status = models.StatusRejected
+		// Pass CollectAllError through so the handler can surface all violations.
+		var cae *funding.CollectAllError
+		if errors.As(err, &cae) {
+			return transfer, cae
+		}
 		return transfer, nil
 	}
 

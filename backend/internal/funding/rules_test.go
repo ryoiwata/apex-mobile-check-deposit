@@ -2,7 +2,6 @@ package funding
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apex/mcd/internal/models"
+	"github.com/apex/mcd/internal/vendor"
 )
 
 // getTestDB opens a Postgres connection using DATABASE_URL env var.
@@ -62,11 +62,9 @@ func getTestRedis(t *testing.T) *redis.Client {
 }
 
 // dupeKey returns the Redis key for a given check hash tuple.
-// Mirrors the logic in applyDuplicateCheck so tests can clean up after themselves.
+// Mirrors the logic in dupeRedisKey so tests can clean up after themselves.
 func dupeKey(routing, account, serial string, amountCents int64) string {
-	raw := fmt.Sprintf("%s:%s:%d:%s", routing, account, amountCents, serial)
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(raw)))
-	return "dupe:check:" + hash
+	return dupeRedisKey(routing, account, serial, amountCents)
 }
 
 // --- Pure unit tests (no external dependencies) ---
@@ -138,6 +136,129 @@ func TestDuplicateCheck_SecondDeposit_Rejected(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, models.ErrDuplicateDeposit),
 		"expected ErrDuplicateDeposit, got: %v", err)
+}
+
+// --- Contribution cap unit tests ---
+
+func TestContributionCap_Retirement_UnderCap(t *testing.T) {
+	err := applyContributionCap("retirement", MaxDepositAmountCents)
+	assert.NoError(t, err)
+}
+
+func TestContributionCap_Retirement_OverCap(t *testing.T) {
+	err := applyContributionCap("retirement", MaxRetirementContributionCents+1)
+	require.Error(t, err)
+}
+
+func TestContributionCap_Individual_AlwaysPasses(t *testing.T) {
+	err := applyContributionCap("individual", MaxRetirementContributionCents+100000)
+	assert.NoError(t, err, "non-retirement accounts should never hit contribution cap")
+}
+
+// --- Collect-all (ApplyRules) integration tests (need Postgres + Redis) ---
+
+func TestFundingFlow_CollectAll_DepositLimitAndDuplicate(t *testing.T) {
+	db := getTestDB(t)
+	rdb := getTestRedis(t)
+	defer db.Close()
+	defer rdb.Close()
+
+	svc := NewService(db, rdb)
+
+	// Pre-seed the duplicate key so the duplicate_check rule fires.
+	routing, account, serial := fmt.Sprintf("COLL-%d", time.Now().UnixNano()), "111222333", "0099"
+	amount := int64(600000) // also over $5,000 limit
+	key := dupeKey(routing, account, serial, amount)
+	rdb.Set(context.Background(), key, "1", DupeTTL)
+	t.Cleanup(func() { rdb.Del(context.Background(), key) })
+
+	transfer := &mockTransfer{AccountID: "ACC-SOFI-1006", AmountCents: amount}
+	vendorResp := mockVendorResp(routing, account, serial)
+
+	_, err := svc.ApplyRules(context.Background(), transfer.toModel(), vendorResp)
+	require.Error(t, err)
+
+	var cae *CollectAllError
+	require.True(t, errors.As(err, &cae), "expected CollectAllError, got %T: %v", err, err)
+	assert.Equal(t, 2, len(cae.Violations), "expected exactly 2 violations (over_limit + duplicate_funding)")
+
+	codes := make(map[string]bool)
+	for _, v := range cae.Violations {
+		codes[v.Code] = true
+	}
+	assert.True(t, codes["over_limit"], "expected over_limit violation")
+	assert.True(t, codes["duplicate_funding"], "expected duplicate_funding violation")
+}
+
+func TestFundingFlow_CollectAll_SingleViolation_OverLimit(t *testing.T) {
+	db := getTestDB(t)
+	rdb := getTestRedis(t)
+	defer db.Close()
+	defer rdb.Close()
+
+	svc := NewService(db, rdb)
+
+	transfer := &mockTransfer{AccountID: "ACC-SOFI-1006", AmountCents: MaxDepositAmountCents + 1}
+	// Use unique MICR data so no pre-existing duplicate
+	routing := fmt.Sprintf("SINGLE-%d", time.Now().UnixNano())
+	vendorResp := mockVendorResp(routing, "999888777", "0001")
+
+	_, err := svc.ApplyRules(context.Background(), transfer.toModel(), vendorResp)
+	require.Error(t, err)
+
+	var cae *CollectAllError
+	require.True(t, errors.As(err, &cae))
+	require.Equal(t, 1, len(cae.Violations))
+	assert.Equal(t, "over_limit", cae.Violations[0].Code)
+}
+
+func TestFundingFlow_CollectAll_AllPass_NoViolations(t *testing.T) {
+	db := getTestDB(t)
+	rdb := getTestRedis(t)
+	defer db.Close()
+	defer rdb.Close()
+
+	svc := NewService(db, rdb)
+
+	routing := fmt.Sprintf("PASS-%d", time.Now().UnixNano())
+	amount := int64(100000)
+	key := dupeKey(routing, "555444333", "0001", amount)
+	t.Cleanup(func() { rdb.Del(context.Background(), key) })
+
+	transfer := &mockTransfer{AccountID: "ACC-SOFI-1006", AmountCents: amount}
+	vendorResp := mockVendorResp(routing, "555444333", "0001")
+
+	result, err := svc.ApplyRules(context.Background(), transfer.toModel(), vendorResp)
+	require.NoError(t, err)
+	assert.True(t, result.RulesPassed)
+	assert.NotEmpty(t, result.OmnibusAccountID)
+}
+
+// mockTransfer is a minimal stand-in so we don't need a full DB row.
+type mockTransfer struct {
+	AccountID   string
+	AmountCents int64
+}
+
+func (m *mockTransfer) toModel() *models.Transfer {
+	return &models.Transfer{
+		AccountID:   m.AccountID,
+		AmountCents: m.AmountCents,
+	}
+}
+
+// mockVendorResp builds a minimal vendor response with MICR data for duplicate checks.
+func mockVendorResp(routing, account, serial string) *vendor.Response {
+	return &vendor.Response{
+		Status:    "pass",
+		IQAResult: "pass",
+		MICRData: &vendor.MICRData{
+			RoutingNumber: routing,
+			AccountNumber: account,
+			CheckSerial:   serial,
+			Confidence:    0.99,
+		},
+	}
 }
 
 // --- Integration tests (need Postgres) ---

@@ -41,10 +41,10 @@ const STATUS_MESSAGES = {
 }
 
 /**
- * @param {{ onSuccess: (transferId: string) => void }} props
+ * @param {{ onSuccess: (transferId: string) => void, initialAccountId?: string }} props
  */
-export default function DepositForm({ onSuccess }) {
-  const [accountId, setAccountId] = useState('ACC-SOFI-1006')
+export default function DepositForm({ onSuccess, initialAccountId }) {
+  const [accountId, setAccountId] = useState(initialAccountId || 'ACC-SOFI-1006')
   const [scenario, setScenario] = useState('CLEAN_PASS')
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [frontFile, setFrontFile] = useState(null)
@@ -53,11 +53,32 @@ export default function DepositForm({ onSuccess }) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  // IQA-specific retake state — preserves account/amount across retakes
+  const [iqaError, setIqaError] = useState(null) // { guidance, code }
+  // Business rule violations from collect-all evaluation
+  const [violations, setViolations] = useState(null)
+  // Re-auth prompt
+  const [needsReauth, setNeedsReauth] = useState(false)
+
+  function resetImageState() {
+    setFrontFile(null)
+    setBackFile(null)
+  }
+
+  function handleRetake() {
+    setIqaError(null)
+    setError(null)
+    resetImageState()
+    // amount and accountId are preserved intentionally
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
     setResult(null)
+    setIqaError(null)
+    setViolations(null)
+    setNeedsReauth(false)
 
     const amountCents = Math.round(parseFloat(amountDollars) * 100)
     if (isNaN(amountCents) || amountCents <= 0) {
@@ -83,8 +104,27 @@ export default function DepositForm({ onSuccess }) {
     setLoading(true)
     try {
       const resp = await api.submitDeposit(formData)
-      setResult(resp.data)
+      const transfer = resp.data
+      // IQA failure — show retake guidance
+      if (transfer?.status === 'rejected' && transfer?.retake_guidance) {
+        setIqaError({
+          guidance: transfer.retake_guidance,
+          code: transfer.vendor_error_code || 'IQA_FAIL',
+        })
+        return
+      }
+      setResult(transfer)
     } catch (err) {
+      // 401 → session expired
+      if (err?.error === 'session_expired' || (typeof err === 'object' && err?.action === 're_authenticate')) {
+        setNeedsReauth(true)
+        return
+      }
+      // 422 collect-all violations
+      if (err?.violations) {
+        setViolations(err.violations)
+        return
+      }
       setError(err?.error || 'Submission failed. Is the backend running?')
     } finally {
       setLoading(false)
@@ -102,6 +142,58 @@ export default function DepositForm({ onSuccess }) {
   }
 
   const status = result?.status
+
+  // Re-auth prompt
+  if (needsReauth) {
+    return (
+      <div className="max-w-lg">
+        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg space-y-3">
+          <p className="text-sm font-semibold text-yellow-800">Session Expired</p>
+          <p className="text-sm text-yellow-700">Your session has expired. Please re-authenticate to continue.</p>
+          <button
+            onClick={() => setNeedsReauth(false)}
+            className="px-4 py-2 bg-yellow-600 text-white text-sm font-medium rounded hover:bg-yellow-700"
+          >
+            Re-authenticate
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // IQA failure retake prompt
+  if (iqaError) {
+    return (
+      <div className="max-w-lg space-y-4">
+        <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+          <div className="flex items-start gap-2">
+            <span className="text-orange-500 text-lg">⚠️</span>
+            <div>
+              <p className="text-sm font-semibold text-orange-800">Image Quality Issue</p>
+              <p className="text-sm text-orange-700 mt-1">{iqaError.guidance}</p>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleRetake}
+              className="px-4 py-2 bg-blue-700 text-white text-sm font-medium rounded hover:bg-blue-800"
+            >
+              Retake Photo
+            </button>
+            <button
+              onClick={() => { setIqaError(null); setResult(null) }}
+              className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-xs text-orange-600">
+            Your account (<strong>{accountId}</strong>) and amount (<strong>${amountDollars}</strong>) will be preserved.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-lg">
@@ -212,6 +304,20 @@ export default function DepositForm({ onSuccess }) {
       {error && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {violations && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded space-y-2">
+          <p className="text-sm font-semibold text-red-800">Deposit could not be processed — please fix all issues:</p>
+          <ul className="space-y-1">
+            {violations.map((v, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-red-700">
+                <span className="mt-0.5 text-red-400">•</span>
+                <span><strong>{v.rule}:</strong> {v.message}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

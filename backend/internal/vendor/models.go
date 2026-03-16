@@ -26,13 +26,14 @@ type MICRData struct {
 
 // Response is what the vendor returns for every validation request.
 type Response struct {
-	Status         string    `json:"status"`          // "pass", "fail", "flagged"
-	IQAResult      string    `json:"iqa_result"`       // "pass", "fail_blur", "fail_glare"
-	MICRData       *MICRData `json:"micr_data"`        // nil on MICR failure
-	OCRAmountCents *int64    `json:"ocr_amount_cents"` // nil on IQA fail
-	DuplicateCheck string    `json:"duplicate_check"`  // "clear", "duplicate_found"
+	Status         string    `json:"status"`                     // "pass", "fail", "flagged"
+	IQAResult      string    `json:"iqa_result"`                  // "pass", "fail_blur", "fail_glare"
+	RetakeGuidance string    `json:"retake_guidance,omitempty"`   // actionable message for IQA failures
+	MICRData       *MICRData `json:"micr_data"`                   // nil on MICR failure
+	OCRAmountCents *int64    `json:"ocr_amount_cents"`            // nil on IQA fail
+	DuplicateCheck string    `json:"duplicate_check"`             // "clear", "duplicate_found"
 	AmountMatch    bool      `json:"amount_match"`
-	TransactionID  string    `json:"transaction_id"`  // vendor-side reference
+	TransactionID  string    `json:"transaction_id"`              // vendor-side reference
 	ErrorCode      *string   `json:"error_code"`
 	ErrorMessage   *string   `json:"error_message"`
 }
