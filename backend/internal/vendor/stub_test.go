@@ -140,6 +140,48 @@ func TestVendorFlow_CleanPass_NoRetakeGuidance(t *testing.T) {
 	assert.Empty(t, resp.RetakeGuidance, "clean pass should have no retake guidance")
 }
 
+func TestVendorFlow_MICRFail_RoutedToOperator(t *testing.T) {
+	stub := NewStub()
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "MICR_READ_FAILURE", DeclaredAmountCents: 100000})
+	require.NoError(t, err)
+	assert.Equal(t, "flagged", resp.Status, "MICR failure must produce flagged status for operator review")
+	assert.Nil(t, resp.MICRData, "MICR failure must have nil MICRData (cannot read MICR line)")
+}
+
+func TestVendorFlow_AmountMismatch_RoutedToOperator(t *testing.T) {
+	stub := NewStub()
+	declared := int64(100000)
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "AMOUNT_MISMATCH", DeclaredAmountCents: declared})
+	require.NoError(t, err)
+	assert.Equal(t, "flagged", resp.Status, "amount mismatch must produce flagged status for operator review")
+	require.NotNil(t, resp.OCRAmountCents, "amount mismatch must include OCR amount for operator comparison")
+	assert.NotEqual(t, declared, *resp.OCRAmountCents, "OCR amount must differ from declared amount")
+}
+
+func TestVendorFlow_DuplicateDetected_Rejected(t *testing.T) {
+	stub := NewStub()
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "DUPLICATE_DETECTED", DeclaredAmountCents: 100000})
+	require.NoError(t, err)
+	assert.Equal(t, "fail", resp.Status, "duplicate detected must produce fail status")
+	assert.Equal(t, "duplicate_found", resp.DuplicateCheck)
+}
+
+func TestVendorFlow_CleanPass_StructuredResult(t *testing.T) {
+	stub := NewStub()
+	declared := int64(200000)
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "CLEAN_PASS", DeclaredAmountCents: declared})
+	require.NoError(t, err)
+	assert.Equal(t, "pass", resp.Status)
+	assert.Equal(t, "pass", resp.IQAResult)
+	require.NotNil(t, resp.MICRData, "clean pass must include MICR data")
+	assert.NotEmpty(t, resp.MICRData.RoutingNumber)
+	assert.NotEmpty(t, resp.MICRData.AccountNumber)
+	require.NotNil(t, resp.OCRAmountCents)
+	assert.Equal(t, declared, *resp.OCRAmountCents, "OCR amount must match declared on clean pass")
+	assert.True(t, resp.AmountMatch)
+	assert.Equal(t, "clear", resp.DuplicateCheck)
+}
+
 func TestStub_Stateless_SameInputSameOutput(t *testing.T) {
 	stub := NewStub()
 	req := &Request{
