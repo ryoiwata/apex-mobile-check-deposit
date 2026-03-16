@@ -93,18 +93,25 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     const id = e.target.value
     setAccountId(id)
     setAccountError(null)
+    setAmountError(null)
+    setGeneralViolations([])
     const acct = ACCOUNTS.find(a => a.id === id)
-    if (acct?.status === 'suspended') {
-      setAccountWarning('This account is currently suspended — deposits will be rejected.')
-    } else if (acct?.status === 'closed') {
-      setAccountWarning('This account is closed — deposits will be rejected.')
+    if (acct?.status !== 'active') {
+      setAccountWarning(acct?.status || null)
+      // Clear field state — user can't interact with them while locked
+      setAmountDollars('100.00')
+      setAmountTouched(false)
+      setFrontFile(null)
+      setBackFile(null)
     } else {
       setAccountWarning(null)
     }
   }
 
+  const selectedAccount = ACCOUNTS.find(a => a.id === accountId)
+  const isAccountIneligible = selectedAccount?.status === 'suspended' || selectedAccount?.status === 'closed'
   const isAmountValid = !validateAmount(amountDollars)
-  const canSubmit = isAmountValid && !loading
+  const canSubmit = isAmountValid && !isAccountIneligible && !loading
 
   function resetImageState() {
     setFrontFile(null)
@@ -305,9 +312,16 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
             ))}
           </select>
           {accountWarning && !accountError && (
-            <div className="mt-1.5 flex items-start gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-              <span className="shrink-0">⚠️</span>
-              <span>{accountWarning}</span>
+            <div className="mt-1.5 flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+              <span className="shrink-0 text-sm">⚠️</span>
+              <div>
+                <strong className="block mb-0.5">
+                  {accountWarning === 'closed' ? 'Account Closed' : 'Account Suspended'}
+                </strong>
+                {accountWarning === 'closed'
+                  ? 'This account is permanently closed and cannot receive deposits. Select a different account to continue.'
+                  : 'This account is currently suspended and cannot receive deposits. Select a different account to continue.'}
+              </div>
             </div>
           )}
           {accountError && (
@@ -317,83 +331,97 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
           )}
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
-          <p className="text-xs text-gray-400 mb-1.5">Single deposits are limited to $5,000.00 per check.</p>
-          <input
-            type="number"
-            step="0.01"
-            value={amountDollars}
-            onChange={handleAmountChange}
-            onBlur={handleAmountBlur}
-            className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 ${amountError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'}`}
-          />
-          {amountError && (
-            <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1" style={{ transition: 'opacity 0.2s' }}>
-              <span>⚠</span> {amountError}
-            </p>
-          )}
-          {!amountError && amountTouched && isAmountValid && (
-            <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
-              <span>✓</span> Amount within deposit limits
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
-          <span className="text-sm font-medium text-gray-700">Image source:</span>
-          <button
-            type="button"
-            onClick={() => setCameraMode(false)}
-            className={`px-3 py-1.5 rounded text-sm font-medium ${!cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-          >
-            📁 Upload File
-          </button>
-          <button
-            type="button"
-            onClick={() => setCameraMode(true)}
-            className={`px-3 py-1.5 rounded text-sm font-medium ${cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-          >
-            📷 Take Photo
-          </button>
-        </div>
-        <p className="text-xs text-gray-500 -mt-3">
-          {cameraMode ? "Opens your phone's rear camera directly" : 'Select an image file from your device'}
-        </p>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Front of Check <span className="text-gray-400 font-normal">(optional — placeholder used if omitted)</span>
-          </label>
-          <input
-            type="file"
-            accept="image/*"
-            {...(cameraMode ? { capture: 'environment' } : {})}
-            onChange={e => setFrontFile(e.target.files[0] || null)}
-            className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Back of Check <span className="text-gray-400 font-normal">(optional)</span>
-          </label>
-          <input
-            type="file"
-            accept="image/*"
-            {...(cameraMode ? { capture: 'environment' } : {})}
-            onChange={e => setBackFile(e.target.files[0] || null)}
-            className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="w-full bg-blue-700 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+        <div
+          style={{
+            opacity: isAccountIneligible ? 0.45 : 1,
+            pointerEvents: isAccountIneligible ? 'none' : 'auto',
+            transition: 'opacity 0.2s ease',
+          }}
+          className="space-y-4"
         >
-          {loading ? 'Submitting…' : 'Submit Deposit'}
-        </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
+            <p className="text-xs text-gray-400 mb-1.5">Single deposits are limited to $5,000.00 per check.</p>
+            <input
+              type="number"
+              step="0.01"
+              value={amountDollars}
+              onChange={handleAmountChange}
+              onBlur={handleAmountBlur}
+              disabled={isAccountIneligible}
+              className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 ${amountError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'}`}
+            />
+            {amountError && (
+              <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1" style={{ transition: 'opacity 0.2s' }}>
+                <span>⚠</span> {amountError}
+              </p>
+            )}
+            {!amountError && amountTouched && isAmountValid && (
+              <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
+                <span>✓</span> Amount within deposit limits
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+            <span className="text-sm font-medium text-gray-700">Image source:</span>
+            <button
+              type="button"
+              disabled={isAccountIneligible}
+              onClick={() => setCameraMode(false)}
+              className={`px-3 py-1.5 rounded text-sm font-medium ${!cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+            >
+              📁 Upload File
+            </button>
+            <button
+              type="button"
+              disabled={isAccountIneligible}
+              onClick={() => setCameraMode(true)}
+              className={`px-3 py-1.5 rounded text-sm font-medium ${cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+            >
+              📷 Take Photo
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 -mt-3">
+            {cameraMode ? "Opens your phone's rear camera directly" : 'Select an image file from your device'}
+          </p>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Front of Check <span className="text-gray-400 font-normal">(optional — placeholder used if omitted)</span>
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={isAccountIneligible}
+              {...(cameraMode ? { capture: 'environment' } : {})}
+              onChange={e => setFrontFile(e.target.files[0] || null)}
+              className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Back of Check <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={isAccountIneligible}
+              {...(cameraMode ? { capture: 'environment' } : {})}
+              onChange={e => setBackFile(e.target.files[0] || null)}
+              className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full bg-blue-700 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Submitting…' : 'Submit Deposit'}
+          </button>
+        </div>
       </form>
 
       {error && (
