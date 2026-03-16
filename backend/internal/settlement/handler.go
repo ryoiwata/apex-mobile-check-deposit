@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // chicagoLoc is loaded once at package init so we don't re-load it on every request.
@@ -66,6 +67,30 @@ func (h *Handler) Trigger(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "settlement run failed: " + err.Error(),
 			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": batch})
+}
+
+// Retry re-attempts bank submission for a batch in retry_pending state.
+// POST /api/v1/operator/settlement/retry/:batch_id
+func (h *Handler) Retry(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("batch_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	batch, err := h.svc.RetryBatch(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": err.Error(),
+			"code":  "SETTLEMENT_RETRY_ERROR",
 		})
 		return
 	}

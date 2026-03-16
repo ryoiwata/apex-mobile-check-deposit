@@ -111,6 +111,88 @@ func TestApprove_WritesAuditLog(t *testing.T) {
 		"audit_logs must contain action=approve with operator_id=%s", operatorID)
 }
 
+// TestOperatorFlow_ReviewApprove_AuditLogged is an alias for TestApprove_WritesAuditLog
+// confirming the flow-coverage matrix requirement.
+func TestOperatorFlow_ReviewApprove_AuditLogged(t *testing.T) {
+	TestApprove_WritesAuditLog(t)
+}
+
+// TestOperatorFlow_ReviewReject_AuditLogged verifies that rejecting a flagged deposit
+// writes an audit log entry — mapping to the operator tab flow.
+func TestOperatorFlow_ReviewReject_AuditLogged(t *testing.T) {
+	TestReject_MovesToRejected(t)
+}
+
+// TestOperatorFlow_ContributionOverride_BeforeApproval verifies that OverrideContributionType
+// changes the contribution_type on a flagged deposit and logs an override audit entry,
+// and that the subsequent approval posts with the new contribution type.
+func TestOperatorFlow_ContributionOverride_BeforeApproval(t *testing.T) {
+	db := getTestDB(t)
+	defer db.Close()
+
+	id := insertFlaggedTransfer(t, db)
+	defer cleanupTransfer(t, db, id)
+
+	const operatorID = "OP-OVERRIDE-TEST"
+	svc := NewService(db, state.New(db), ledger.NewService(db), nil)
+
+	// Step 1: Override contribution type BEFORE approval
+	transfer, err := svc.OverrideContributionType(context.Background(), id, operatorID, "ROLLOVER")
+	require.NoError(t, err)
+	require.NotNil(t, transfer.ContributionType)
+	assert.Equal(t, "ROLLOVER", *transfer.ContributionType, "contribution type should be updated to ROLLOVER")
+
+	// Verify override audit log entry
+	entries, err := GetAuditLog(context.Background(), db, &id)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	overrideFound := false
+	for _, e := range entries {
+		if e.Action == "override" && e.OperatorID == operatorID {
+			overrideFound = true
+			break
+		}
+	}
+	assert.True(t, overrideFound, "audit_logs must contain action=override with operator_id=%s", operatorID)
+
+	// Step 2: Approve after override — approval should succeed
+	approved, err := svc.Approve(context.Background(), id, operatorID, "approved after override", nil)
+	require.NoError(t, err)
+	assert.Equal(t, models.StatusFundsPosted, approved.Status)
+}
+
+// TestOperatorFlow_QueueCycling_NextItem verifies that after approving one deposit,
+// a second flagged deposit still appears in the review queue.
+func TestOperatorFlow_QueueCycling_NextItem(t *testing.T) {
+	db := getTestDB(t)
+	defer db.Close()
+
+	id1 := insertFlaggedTransfer(t, db)
+	id2 := insertFlaggedTransfer(t, db)
+	defer cleanupTransfer(t, db, id1)
+	defer cleanupTransfer(t, db, id2)
+
+	svc := NewService(db, state.New(db), ledger.NewService(db), nil)
+
+	// Process first item
+	_, err := svc.Approve(context.Background(), id1, "OP-CYCLE-TEST", "cycle test", nil)
+	require.NoError(t, err)
+
+	// Second item should still be in the queue
+	queue, err := svc.GetQueue(context.Background())
+	require.NoError(t, err)
+
+	found := false
+	for _, t := range queue {
+		if t.ID == id2 {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "second flagged deposit should still be in the review queue after first is approved")
+}
+
 // TestReject_MovesToRejected verifies that rejecting a flagged+analyzing deposit
 // transitions it to rejected and writes an audit log entry.
 func TestReject_MovesToRejected(t *testing.T) {

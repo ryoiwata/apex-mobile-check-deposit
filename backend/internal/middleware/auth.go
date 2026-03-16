@@ -23,9 +23,11 @@ func InvestorAuth(investorToken string) gin.HandlerFunc {
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 		if token != investorToken {
+			// Return session_expired so the React client can show a re-auth prompt
+			// rather than a generic error. The action field tells the client what to do.
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "unauthorized",
-				"code":  "UNAUTHORIZED",
+				"error":  "session_expired",
+				"action": "re_authenticate",
 			})
 			return
 		}

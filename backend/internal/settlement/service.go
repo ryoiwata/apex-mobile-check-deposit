@@ -12,30 +12,62 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	// DefaultMaxRetries is the default maximum bank ACK retries before escalation.
+	DefaultMaxRetries = 3
+)
+
 // Batch represents a settlement batch record, mapping 1:1 to settlement_batches table.
 type Batch struct {
-	ID                      uuid.UUID `json:"batch_id"`
-	BatchDate               time.Time `json:"batch_date"`
-	FilePath                *string   `json:"file_path,omitempty"`
-	DepositCount            int       `json:"deposit_count"`
-	TotalAmountCents        int64     `json:"total_amount_cents"`
-	Status                  string    `json:"status"`
-	BankReference           *string   `json:"bank_reference,omitempty"`
-	DepositsRolledToNextDay int       `json:"deposits_rolled_to_next_day,omitempty"`
-	NextSettlementDate      *string   `json:"next_settlement_date,omitempty"`
-	CreatedAt               time.Time `json:"created_at"`
+	ID                      uuid.UUID  `json:"batch_id"`
+	BatchDate               time.Time  `json:"batch_date"`
+	FilePath                *string    `json:"file_path,omitempty"`
+	DepositCount            int        `json:"deposit_count"`
+	TotalAmountCents        int64      `json:"total_amount_cents"`
+	Status                  string     `json:"status"`
+	BankReference           *string    `json:"bank_reference,omitempty"`
+	RetryCount              int        `json:"retry_count,omitempty"`
+	LastRetryAt             *time.Time `json:"last_retry_at,omitempty"`
+	DepositsRolledToNextDay int        `json:"deposits_rolled_to_next_day,omitempty"`
+	NextSettlementDate      *string    `json:"next_settlement_date,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
 }
 
 // Service handles EOD batch settlement processing.
 type Service struct {
-	db        *sql.DB
-	machine   *state.Machine
-	outputDir string
+	db          *sql.DB
+	machine     *state.Machine
+	outputDir   string
+	bankAckMode string // "pass" (default) or "fail" (for testing)
+	maxRetries  int
 }
 
 // NewService creates a settlement Service.
 func NewService(db *sql.DB, machine *state.Machine, outputDir string) *Service {
-	return &Service{db: db, machine: machine, outputDir: outputDir}
+	return &Service{
+		db:          db,
+		machine:     machine,
+		outputDir:   outputDir,
+		bankAckMode: "pass",
+		maxRetries:  DefaultMaxRetries,
+	}
+}
+
+// SetBankAckMode configures the bank ACK stub behavior.
+// Use "pass" (default) for normal operation, "fail" to simulate ACK failures in tests.
+func (s *Service) SetBankAckMode(mode string) {
+	s.bankAckMode = mode
+}
+
+// SetMaxRetries configures how many ACK retries before escalating to operator.
+func (s *Service) SetMaxRetries(n int) {
+	s.maxRetries = n
+}
+
+// simulateBankAck returns true if the bank acknowledged the submission.
+// In production this would call the bank's ACK endpoint.
+func (s *Service) simulateBankAck() bool {
+	return s.bankAckMode != "fail"
 }
 
 // CutoffTime returns the UTC time representing 6:30 PM CT for the given date.
@@ -116,6 +148,36 @@ func nextBusinessDay(date time.Time) time.Time {
 	return next
 }
 
+// getBatch retrieves a settlement batch by ID.
+func (s *Service) getBatch(ctx context.Context, batchID uuid.UUID) (*Batch, error) {
+	var b Batch
+	var filePath, bankRef sql.NullString
+	var lastRetryAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, batch_date, file_path, deposit_count, total_amount_cents,
+		       status, bank_reference, retry_count, last_retry_at, created_at
+		FROM settlement_batches WHERE id = $1`, batchID).Scan(
+		&b.ID, &b.BatchDate, &filePath, &b.DepositCount, &b.TotalAmountCents,
+		&b.Status, &bankRef, &b.RetryCount, &lastRetryAt, &b.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("settlement: batch %s not found", batchID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("settlement: getting batch %s: %w", batchID, err)
+	}
+	if filePath.Valid {
+		b.FilePath = &filePath.String
+	}
+	if bankRef.Valid {
+		b.BankReference = &bankRef.String
+	}
+	if lastRetryAt.Valid {
+		b.LastRetryAt = &lastRetryAt.Time
+	}
+	return &b, nil
+}
+
 // RunSettlement executes the EOD batch settlement for the given date.
 //
 // Processing order:
@@ -126,6 +188,7 @@ func nextBusinessDay(date time.Time) time.Time {
 //  5. Generate settlement file BEFORE any state transitions — safe to retry on failure
 //  6. For each transfer: open tx, transition FundsPosted→Completed, set settlement_batch_id, commit
 //  7. Update batch record with final counts and mark 'submitted'
+//  8. Simulate bank ACK — if acknowledged, mark 'acknowledged'; if not, mark 'retry_pending'
 func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batch, error) {
 	cutoff := CutoffTime(batchDate)
 	now := time.Now().UTC()
@@ -227,11 +290,9 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 		completed++
 	}
 
-	// Update the batch record with final results.
 	batch.DepositCount = completed
 	batch.TotalAmountCents = totalCents
 	batch.FilePath = &filePath
-	batch.Status = "submitted"
 	batch.DepositsRolledToNextDay = rolledCount
 	if rolledCount > 0 {
 		nextDay := nextBusinessDay(batchDate)
@@ -239,13 +300,92 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 		batch.NextSettlementDate = &nextDayStr
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE settlement_batches
-		SET file_path = $1, deposit_count = $2, total_amount_cents = $3, status = 'submitted'
-		WHERE id = $4`,
-		filePath, completed, totalCents, batch.ID,
-	); err != nil {
-		return nil, fmt.Errorf("settlement: updating batch record: %w", err)
+	// Simulate bank ACK. If acknowledged, mark the batch submitted/acknowledged.
+	// If not acknowledged, mark retry_pending with retry_count=1.
+	if s.simulateBankAck() {
+		batch.Status = "submitted"
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET file_path = $1, deposit_count = $2, total_amount_cents = $3, status = 'submitted'
+			WHERE id = $4`,
+			filePath, completed, totalCents, batch.ID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch record: %w", err)
+		}
+	} else {
+		// Bank did not acknowledge — mark as retry_pending
+		batch.Status = "retry_pending"
+		batch.RetryCount = 1
+		now := time.Now().UTC()
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET file_path = $1, deposit_count = $2, total_amount_cents = $3,
+			    status = 'retry_pending', retry_count = 1, last_retry_at = NOW()
+			WHERE id = $4`,
+			filePath, completed, totalCents, batch.ID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch record (retry_pending): %w", err)
+		}
+	}
+
+	return batch, nil
+}
+
+// RetryBatch re-attempts bank submission for a batch in retry_pending state.
+// Increments retry_count on each attempt. After maxRetries failures, escalates to operator.
+func (s *Service) RetryBatch(ctx context.Context, batchID uuid.UUID) (*Batch, error) {
+	batch, err := s.getBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	if batch.Status != "retry_pending" {
+		return nil, fmt.Errorf("settlement: batch %s is not in retry_pending state (current: %s)", batchID, batch.Status)
+	}
+
+	newRetryCount := batch.RetryCount + 1
+	now := time.Now().UTC()
+
+	if s.simulateBankAck() {
+		// Bank acknowledged — mark as submitted
+		batch.Status = "submitted"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET status = 'submitted', retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch after successful retry: %w", err)
+		}
+	} else if newRetryCount >= s.maxRetries {
+		// Max retries exceeded — escalate to operator
+		batch.Status = "escalated"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET status = 'escalated', retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: escalating batch: %w", err)
+		}
+	} else {
+		// Still failing — stay in retry_pending with incremented count
+		batch.Status = "retry_pending"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating retry count: %w", err)
+		}
 	}
 
 	return batch, nil

@@ -23,14 +23,15 @@ import (
 
 // Config holds all server configuration loaded from environment variables.
 type Config struct {
-	DatabaseURL         string
-	RedisURL            string
-	ServerPort          string
-	ImageStorageDir     string
-	SettlementOutputDir string
-	ReturnFeeCents      int64
-	InvestorToken       string
-	OperatorToken       string
+	DatabaseURL            string
+	RedisURL               string
+	ServerPort             string
+	ImageStorageDir        string
+	SettlementOutputDir    string
+	ReturnFeeCents         int64
+	InvestorToken          string
+	OperatorToken          string
+	MaxSettlementRetries   int
 }
 
 func loadConfig() Config {
@@ -76,15 +77,23 @@ func loadConfig() Config {
 		operatorToken = "tok_operator_test"
 	}
 
+	maxSettlementRetries := settlement.DefaultMaxRetries
+	if v := os.Getenv("MAX_SETTLEMENT_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxSettlementRetries = n
+		}
+	}
+
 	return Config{
-		DatabaseURL:         databaseURL,
-		RedisURL:            redisURL,
-		ServerPort:          port,
-		ImageStorageDir:     imageDir,
-		SettlementOutputDir: settlementDir,
-		ReturnFeeCents:      returnFeeCents,
-		InvestorToken:       investorToken,
-		OperatorToken:       operatorToken,
+		DatabaseURL:          databaseURL,
+		RedisURL:             redisURL,
+		ServerPort:           port,
+		ImageStorageDir:      imageDir,
+		SettlementOutputDir:  settlementDir,
+		ReturnFeeCents:       returnFeeCents,
+		InvestorToken:        investorToken,
+		OperatorToken:        operatorToken,
+		MaxSettlementRetries: maxSettlementRetries,
 	}
 }
 
@@ -127,6 +136,7 @@ func main() {
 	depositSvc := deposit.NewService(sqlDB, machine, vendorSvc, fundingSvc, ledgerSvc)
 	operatorSvc := operator.NewService(sqlDB, machine, ledgerSvc, fundingSvc)
 	settlementSvc := settlement.NewService(sqlDB, machine, cfg.SettlementOutputDir)
+	settlementSvc.SetMaxRetries(cfg.MaxSettlementRetries)
 
 	// --- Create handlers ---
 	depositHandler := deposit.NewHandler(depositSvc, deposit.Config{
@@ -205,8 +215,9 @@ func main() {
 		ops.GET("/audit", operatorHandler.GetAuditLog)
 		// Return endpoint lives here — only operators can trigger returns
 		ops.POST("/deposits/:id/return", depositHandler.Return)
-		// Settlement trigger
+		// Settlement trigger and retry
 		ops.POST("/settlement/trigger", settlementHandler.Trigger)
+		ops.POST("/settlement/retry/:batch_id", settlementHandler.Retry)
 	}
 
 	log.Printf("Starting server on :%s", cfg.ServerPort)

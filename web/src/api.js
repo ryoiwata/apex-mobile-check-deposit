@@ -73,6 +73,12 @@ export const api = {
       body: JSON.stringify({ batch_date: batchDate }),
     }).then(handleResponse),
 
+  retrySettlement: (batchId) =>
+    fetch(`/api/v1/operator/settlement/retry/${batchId}`, {
+      method: 'POST',
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
   overrideContributionType: (id, contributionType) =>
     fetch(`/api/v1/operator/deposits/${id}/contribution-type`, {
       method: 'PATCH',
