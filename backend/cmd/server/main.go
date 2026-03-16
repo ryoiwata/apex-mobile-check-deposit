@@ -15,6 +15,7 @@ import (
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/middleware"
+	"github.com/apex/mcd/internal/notification"
 	"github.com/apex/mcd/internal/operator"
 	"github.com/apex/mcd/internal/settlement"
 	"github.com/apex/mcd/internal/state"
@@ -137,15 +138,17 @@ func main() {
 	operatorSvc := operator.NewService(sqlDB, machine, ledgerSvc, fundingSvc)
 	settlementSvc := settlement.NewService(sqlDB, machine, cfg.SettlementOutputDir)
 	settlementSvc.SetMaxRetries(cfg.MaxSettlementRetries)
+	notifRepo := notification.NewRepo(sqlDB)
 
 	// --- Create handlers ---
 	depositHandler := deposit.NewHandler(depositSvc, deposit.Config{
 		ImageStorageDir: cfg.ImageStorageDir,
 		ReturnFeeCents:  cfg.ReturnFeeCents,
-	})
-	operatorHandler := operator.NewHandler(operatorSvc)
+	}, notifRepo)
+	operatorHandler := operator.NewHandler(operatorSvc, notifRepo)
 	settlementHandler := settlement.NewHandler(settlementSvc)
 	ledgerHandler := ledger.NewHandler(ledgerSvc)
+	notifHandler := notification.NewHandler(notifRepo)
 
 	// --- Configure Gin router ---
 	r := gin.Default()
@@ -204,6 +207,11 @@ func main() {
 		inv.GET("/deposits", depositHandler.List)
 		inv.GET("/deposits/:id", depositHandler.GetByID)
 		inv.GET("/ledger/:account_id", ledgerHandler.GetByAccount)
+		// Notification endpoints — investor-scoped
+		inv.GET("/notifications", notifHandler.List)
+		inv.GET("/notifications/unread-count", notifHandler.UnreadCount)
+		inv.POST("/notifications/:id/read", notifHandler.MarkRead)
+		inv.POST("/notifications/read-all", notifHandler.MarkAllRead)
 	}
 
 	// Operator routes (require X-Operator-ID header)

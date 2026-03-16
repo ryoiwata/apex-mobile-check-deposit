@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import DepositForm from './components/DepositForm.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
 import TransferStatus from './components/TransferStatus.jsx'
 import LedgerView from './components/LedgerView.jsx'
+import NotificationPanel from './components/NotificationPanel.jsx'
 
 const TABS = [
   { id: 'deposit', label: 'Deposit' },
@@ -14,19 +15,26 @@ const TABS = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('deposit')
   const [transferId, setTransferId] = useState(null)
+  const [accountId, setAccountId] = useState(null)
+  const [unreadCount, setUnreadCount] = useState(0)
   // Preserved account ID so "Start New Deposit" after a return can pre-select the account
   const [returnAccountId, setReturnAccountId] = useState(null)
 
-  function handleDepositSuccess(id) {
+  function handleDepositSuccess(id, acctId) {
     setTransferId(id)
+    if (acctId) setAccountId(acctId)
     setActiveTab('status')
   }
 
-  function handleStartNewDeposit(accountId) {
-    setReturnAccountId(accountId)
+  function handleStartNewDeposit(acctId) {
+    setReturnAccountId(acctId)
     setTransferId(null)
     setActiveTab('deposit')
   }
+
+  const handleUnreadChange = useCallback((count) => {
+    setUnreadCount(count)
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -46,8 +54,27 @@ export default function App() {
                   ? 'border-blue-700 text-blue-700'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             >
               {tab.label}
+              {tab.id === 'status' && unreadCount > 0 && (
+                <span style={{
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  borderRadius: 10,
+                  minWidth: 18,
+                  height: 18,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 5px',
+                  lineHeight: 1,
+                }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -61,10 +88,17 @@ export default function App() {
           />
         )}
         {activeTab === 'status' && (
-          <TransferStatus
-            initialTransferId={transferId}
-            onStartNewDeposit={handleStartNewDeposit}
-          />
+          <>
+            <NotificationPanel
+              accountId={accountId}
+              onSelectTransfer={(tid) => setTransferId(tid)}
+              onUnreadChange={handleUnreadChange}
+            />
+            <TransferStatus
+              initialTransferId={transferId}
+              onStartNewDeposit={handleStartNewDeposit}
+            />
+          </>
         )}
         {activeTab === 'queue' && <ReviewQueue />}
         {activeTab === 'ledger' && <LedgerView />}

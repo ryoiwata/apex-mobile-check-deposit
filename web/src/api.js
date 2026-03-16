@@ -99,4 +99,27 @@ export const api = {
       headers: operatorHeaders(),
     }).then(handleResponse)
   },
+
+  // Notification endpoints
+  getNotifications: (accountId) =>
+    fetch(`/api/v1/notifications?account_id=${accountId}`, {
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  getUnreadCount: (accountId) =>
+    fetch(`/api/v1/notifications/unread-count?account_id=${accountId}`, {
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  markNotificationRead: (notifId) =>
+    fetch(`/api/v1/notifications/${notifId}/read`, {
+      method: 'POST',
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  markAllNotificationsRead: (accountId) =>
+    fetch(`/api/v1/notifications/read-all?account_id=${accountId}`, {
+      method: 'POST',
+      headers: investorHeaders(),
+    }).then(handleResponse),
 }

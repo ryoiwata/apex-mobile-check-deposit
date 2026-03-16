@@ -1,23 +1,27 @@
 package operator
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/apex/mcd/internal/models"
+	"github.com/apex/mcd/internal/notification"
 )
 
 // Handler exposes operator service methods as HTTP endpoints.
 type Handler struct {
-	svc *Service
+	svc      *Service
+	notifRepo *notification.Repo
 }
 
 // NewHandler creates a new operator Handler.
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, notifRepo *notification.Repo) *Handler {
+	return &Handler{svc: svc, notifRepo: notifRepo}
 }
 
 // GetQueue returns all flagged deposits awaiting operator review.
@@ -79,6 +83,23 @@ func (h *Handler) Approve(c *gin.Context) {
 		return
 	}
 
+	// Best-effort notification — do not fail the request if this errors.
+	meta, _ := json.Marshal(map[string]any{
+		"amount_cents": transfer.AmountCents,
+		"status":       string(models.StatusFundsPosted),
+	})
+	_ = h.notifRepo.Create(c.Request.Context(), &notification.Notification{
+		AccountID:  transfer.AccountID,
+		TransferID: transfer.ID.String(),
+		Type:       "approved",
+		Title:      "Deposit Approved",
+		Message: fmt.Sprintf(
+			"Your check deposit of %s has been approved. Funds have been provisionally credited to your account.",
+			notification.FormatCents(transfer.AmountCents),
+		),
+		Metadata: meta,
+	})
+
 	c.JSON(http.StatusOK, gin.H{"data": transfer})
 }
 
@@ -120,6 +141,26 @@ func (h *Handler) Reject(c *gin.Context) {
 		})
 		return
 	}
+
+	// Best-effort notification — do not fail the request if this errors.
+	meta, _ := json.Marshal(map[string]any{
+		"amount_cents":   transfer.AmountCents,
+		"reason":         body.Reason,
+		"notes":          body.Notes,
+		"can_resubmit":   true,
+	})
+	_ = h.notifRepo.Create(c.Request.Context(), &notification.Notification{
+		AccountID:  transfer.AccountID,
+		TransferID: transfer.ID.String(),
+		Type:       "rejected",
+		Title:      "Deposit Rejected",
+		Message: fmt.Sprintf(
+			"Your check deposit of %s has been rejected. Reason: %s. You may submit a new deposit with a different check.",
+			notification.FormatCents(transfer.AmountCents),
+			body.Reason,
+		),
+		Metadata: meta,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"data": transfer})
 }

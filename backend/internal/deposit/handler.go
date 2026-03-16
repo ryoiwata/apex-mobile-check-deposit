@@ -1,6 +1,7 @@
 package deposit
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/models"
+	"github.com/apex/mcd/internal/notification"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -31,13 +33,14 @@ type Config struct {
 
 // Handler handles HTTP requests for deposit operations.
 type Handler struct {
-	svc *Service
-	cfg Config
+	svc       *Service
+	cfg       Config
+	notifRepo *notification.Repo
 }
 
 // NewHandler creates a deposit Handler.
-func NewHandler(svc *Service, cfg Config) *Handler {
-	return &Handler{svc: svc, cfg: cfg}
+func NewHandler(svc *Service, cfg Config, notifRepo *notification.Repo) *Handler {
+	return &Handler{svc: svc, cfg: cfg, notifRepo: notifRepo}
 }
 
 // transferDetailResponse wraps a Transfer with its state history for the GetByID response.
@@ -352,6 +355,27 @@ func (h *Handler) Return(c *gin.Context) {
 		})
 		return
 	}
+
+	// Best-effort notification — do not fail the request if this errors.
+	meta, _ := json.Marshal(map[string]any{
+		"amount_cents": transfer.AmountCents,
+		"fee_cents":    h.cfg.ReturnFeeCents,
+		"reason":       body.ReturnReason,
+		"can_resubmit": true,
+	})
+	_ = h.notifRepo.Create(c.Request.Context(), &notification.Notification{
+		AccountID:  transfer.AccountID,
+		TransferID: transfer.ID.String(),
+		Type:       "returned",
+		Title:      "Check Returned — Fee Applied",
+		Message: fmt.Sprintf(
+			"Your check deposit of %s was returned by the bank. Reason: %s. A %s return fee has been deducted from your account. You may submit a new deposit with a different check.",
+			notification.FormatCents(transfer.AmountCents),
+			body.ReturnReason,
+			notification.FormatCents(h.cfg.ReturnFeeCents),
+		),
+		Metadata: meta,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{

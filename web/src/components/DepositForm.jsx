@@ -457,7 +457,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
             <p className="text-sm text-yellow-700">Flag reason: <strong>{result.flag_reason}</strong></p>
           )}
           <button
-            onClick={() => onSuccess(result.transfer_id)}
+            onClick={() => onSuccess(result.transfer_id, accountId)}
             className="text-sm text-blue-600 hover:underline"
           >
             View transfer details →
