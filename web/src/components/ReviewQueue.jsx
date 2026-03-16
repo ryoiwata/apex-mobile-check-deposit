@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api.js'
 
 function fmtCents(cents) {
@@ -27,6 +27,8 @@ function StatusBadge({ status }) {
 function CheckCard({ deposit, onAction }) {
   const [showImages, setShowImages] = useState(false)
   const [lightbox, setLightbox] = useState(null)
+  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 })
+  const containerRef = useRef(null)
   const [approving, setApproving] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [actionError, setActionError] = useState(null)
@@ -137,7 +139,7 @@ function CheckCard({ deposit, onAction }) {
                 src={`/api/v1/deposits/${id}/images/${side}`}
                 alt={`Check ${side}`}
                 className="w-48 border border-gray-200 rounded cursor-zoom-in hover:opacity-80 transition-opacity"
-                onClick={() => setLightbox(`/api/v1/deposits/${id}/images/${side}`)}
+                onClick={() => { setLightbox(`/api/v1/deposits/${id}/images/${side}`); setView({ zoom: 1, x: 0, y: 0 }) }}
                 onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
               />
             </div>
@@ -147,21 +149,50 @@ function CheckCard({ deposit, onAction }) {
 
       {lightbox && (
         <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-          onClick={() => setLightbox(null)}
+          ref={containerRef}
+          className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 overflow-hidden"
+          style={{ cursor: view.zoom > 1 ? 'grab' : 'zoom-in' }}
+          onClick={() => { setLightbox(null); setView({ zoom: 1, x: 0, y: 0 }) }}
+          onWheel={e => {
+            e.preventDefault()
+            const rect = containerRef.current.getBoundingClientRect()
+            const cx = e.clientX - rect.left - rect.width / 2
+            const cy = e.clientY - rect.top - rect.height / 2
+            const factor = Math.exp(-e.deltaY * 0.0012)
+            setView(v => {
+              const newZoom = Math.min(10, Math.max(0.5, v.zoom * factor))
+              const scale = newZoom / v.zoom
+              return {
+                zoom: newZoom,
+                x: cx - scale * (cx - v.x),
+                y: cy - scale * (cy - v.y),
+              }
+            })
+          }}
         >
           <img
             src={lightbox}
             alt="Check enlarged"
-            className="max-w-[90vw] max-h-[90vh] rounded shadow-2xl"
+            style={{
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
+              transformOrigin: 'center',
+              userSelect: 'none',
+            }}
+            className="rounded shadow-2xl max-w-[85vw] max-h-[85vh] object-contain"
             onClick={e => e.stopPropagation()}
+            draggable={false}
           />
-          <button
-            className="absolute top-4 right-6 text-white text-3xl font-bold leading-none hover:text-gray-300"
-            onClick={() => setLightbox(null)}
-          >
-            ×
-          </button>
+          <div className="fixed top-4 right-6 flex items-center gap-3">
+            <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
+              scroll to zoom · {Math.round(view.zoom * 100)}%
+            </span>
+            <button
+              className="text-white text-3xl font-bold leading-none hover:text-gray-300"
+              onClick={() => { setLightbox(null); setView({ zoom: 1, x: 0, y: 0 }) }}
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
     </div>
