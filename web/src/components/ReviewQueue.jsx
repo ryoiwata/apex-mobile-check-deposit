@@ -26,6 +26,7 @@ function StatusBadge({ status }) {
 
 function CheckCard({ deposit, onAction }) {
   const [showImages, setShowImages] = useState(false)
+  const [lightbox, setLightbox] = useState(null)
   const [approving, setApproving] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [actionError, setActionError] = useState(null)
@@ -129,24 +130,38 @@ function CheckCard({ deposit, onAction }) {
 
       {showImages && (
         <div className="flex gap-3 flex-wrap">
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Front</p>
-            <img
-              src={`/api/v1/deposits/${id}/images/front`}
-              alt="Check front"
-              className="w-48 border border-gray-200 rounded"
-              onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
-            />
-          </div>
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Back</p>
-            <img
-              src={`/api/v1/deposits/${id}/images/back`}
-              alt="Check back"
-              className="w-48 border border-gray-200 rounded"
-              onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
-            />
-          </div>
+          {['front', 'back'].map(side => (
+            <div key={side}>
+              <p className="text-xs text-gray-500 mb-1 capitalize">{side}</p>
+              <img
+                src={`/api/v1/deposits/${id}/images/${side}`}
+                alt={`Check ${side}`}
+                className="w-48 border border-gray-200 rounded cursor-zoom-in hover:opacity-80 transition-opacity"
+                onClick={() => setLightbox(`/api/v1/deposits/${id}/images/${side}`)}
+                onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={lightbox}
+            alt="Check enlarged"
+            className="max-w-[90vw] max-h-[90vh] rounded shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            className="absolute top-4 right-6 text-white text-3xl font-bold leading-none hover:text-gray-300"
+            onClick={() => setLightbox(null)}
+          >
+            ×
+          </button>
         </div>
       )}
     </div>
