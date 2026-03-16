@@ -1,225 +1,38 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api.js'
 
 function fmtCents(cents) {
+  if (cents == null) return '—'
   return `$${(cents / 100).toFixed(2)}`
 }
 
-function fmtDate(iso) {
-  return new Date(iso).toLocaleString()
+function timeInQueue(createdAt) {
+  const ms = Date.now() - new Date(createdAt).getTime()
+  const min = Math.floor(ms / 60000)
+  const hr = Math.floor(min / 60)
+  if (hr > 0) return `${hr}h ${min % 60}m`
+  if (min > 0) return `${min}m`
+  return 'just now'
 }
 
-function StatusBadge({ status }) {
-  const styles = {
-    analyzing: 'bg-yellow-100 text-yellow-800',
-    funds_posted: 'bg-green-100 text-green-800',
-    completed: 'bg-green-100 text-green-800',
-    rejected: 'bg-red-100 text-red-800',
-    returned: 'bg-orange-100 text-orange-800',
-  }
-  return (
-    <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase ${styles[status] || 'bg-gray-100 text-gray-700'}`}>
-      {status?.replace('_', ' ')}
-    </span>
-  )
-}
-
-function CheckCard({ deposit, onAction }) {
-  const [showImages, setShowImages] = useState(false)
-  const [lightbox, setLightbox] = useState(null)
-  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 })
-  const containerRef = useRef(null)
-  const [approving, setApproving] = useState(false)
-  const [rejecting, setRejecting] = useState(false)
-  const [actionError, setActionError] = useState(null)
-
-  const id = deposit.transfer_id
-
-  async function handleApprove() {
-    if (!window.confirm('Approve this deposit? Funds will be provisionally posted.')) return
-    setApproving(true)
-    setActionError(null)
-    try {
-      await api.approveDeposit(id, { notes: 'Approved via operator UI' })
-      onAction() // fires immediately — no need to wait for next poll interval
-    } catch (err) {
-      setActionError(err?.error || 'Approve failed')
-    } finally {
-      setApproving(false)
-    }
-  }
-
-  async function handleReject() {
-    const reason = window.prompt('Enter rejection reason:')
-    if (reason === null) return // cancelled
-    setRejecting(true)
-    setActionError(null)
-    try {
-      await api.rejectDeposit(id, { reason: reason || 'Rejected by operator', notes: '' })
-      onAction() // fires immediately — no need to wait for next poll interval
-    } catch (err) {
-      setActionError(err?.error || 'Reject failed')
-    } finally {
-      setRejecting(false)
-    }
-  }
-
-  return (
-    <div className="bg-white border border-gray-200 rounded p-4 space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <StatusBadge status={deposit.status} />
-            {deposit.flagged && (
-              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-orange-100 text-orange-700 uppercase">
-                Flagged
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-500 font-mono">{id}</p>
-          <p className="text-sm text-gray-700">
-            Account: <strong>{deposit.account_id}</strong>
-          </p>
-          <p className="text-sm text-gray-700">
-            Amount: <strong>{fmtCents(deposit.amount_cents)}</strong>
-          </p>
-          {deposit.flag_reason && (
-            <p className="text-sm text-orange-700">
-              Flag: <strong>{deposit.flag_reason}</strong>
-            </p>
-          )}
-          {deposit.micr_routing && (
-            <p className="text-xs text-gray-500">
-              MICR routing: {deposit.micr_routing} · acct: {deposit.micr_account} · serial: {deposit.micr_serial}
-              {deposit.micr_confidence != null && ` · confidence: ${(deposit.micr_confidence * 100).toFixed(0)}%`}
-            </p>
-          )}
-          {deposit.ocr_amount_cents != null && (
-            <p className="text-xs text-yellow-700">
-              OCR amount: {fmtCents(deposit.ocr_amount_cents)} vs declared: {fmtCents(deposit.declared_amount_cents)}
-            </p>
-          )}
-          <p className="text-xs text-gray-400">{fmtDate(deposit.created_at)}</p>
-        </div>
-
-        <div className="flex flex-col gap-2 shrink-0">
-          <button
-            onClick={handleApprove}
-            disabled={approving || rejecting}
-            className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 disabled:opacity-50"
-          >
-            {approving ? 'Approving…' : 'Approve'}
-          </button>
-          <button
-            onClick={handleReject}
-            disabled={approving || rejecting}
-            className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 disabled:opacity-50"
-          >
-            {rejecting ? 'Rejecting…' : 'Reject'}
-          </button>
-          <button
-            onClick={() => setShowImages(v => !v)}
-            className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded hover:bg-gray-200"
-          >
-            {showImages ? 'Hide Images' : 'Show Images'}
-          </button>
-        </div>
-      </div>
-
-      {actionError && (
-        <p className="text-xs text-red-600">{actionError}</p>
-      )}
-
-      {showImages && (
-        <div className="flex gap-3 flex-wrap">
-          {['front', 'back'].map(side => (
-            <div key={side}>
-              <p className="text-xs text-gray-500 mb-1 capitalize">{side}</p>
-              <img
-                src={`/api/v1/deposits/${id}/images/${side}`}
-                alt={`Check ${side}`}
-                className="w-48 border border-gray-200 rounded cursor-zoom-in hover:opacity-80 transition-opacity"
-                onClick={() => { setLightbox(`/api/v1/deposits/${id}/images/${side}`); setView({ zoom: 1, x: 0, y: 0 }) }}
-                onError={e => { e.target.alt = 'Image unavailable'; e.target.className = 'w-48 border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-400' }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {lightbox && (
-        <div
-          ref={containerRef}
-          className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 overflow-hidden"
-          style={{ cursor: view.zoom > 1 ? 'grab' : 'zoom-in' }}
-          onClick={() => { setLightbox(null); setView({ zoom: 1, x: 0, y: 0 }) }}
-          onWheel={e => {
-            e.preventDefault()
-            const rect = containerRef.current.getBoundingClientRect()
-            const cx = e.clientX - rect.left - rect.width / 2
-            const cy = e.clientY - rect.top - rect.height / 2
-            const factor = Math.exp(-e.deltaY * 0.0012)
-            setView(v => {
-              const newZoom = Math.min(10, Math.max(0.5, v.zoom * factor))
-              const scale = newZoom / v.zoom
-              return {
-                zoom: newZoom,
-                x: cx - scale * (cx - v.x),
-                y: cy - scale * (cy - v.y),
-              }
-            })
-          }}
-        >
-          <img
-            src={lightbox}
-            alt="Check enlarged"
-            style={{
-              transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
-              transformOrigin: 'center',
-              userSelect: 'none',
-            }}
-            className="rounded shadow-2xl max-w-[85vw] max-h-[85vh] object-contain"
-            onClick={e => e.stopPropagation()}
-            draggable={false}
-          />
-          <div className="fixed top-4 right-6 flex items-center gap-3">
-            <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
-              scroll to zoom · {Math.round(view.zoom * 100)}%
-            </span>
-            <button
-              className="text-white text-3xl font-bold leading-none hover:text-gray-300"
-              onClick={() => { setLightbox(null); setView({ zoom: 1, x: 0, y: 0 }) }}
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-export default function ReviewQueue() {
+export default function ReviewQueue({ onSelectDeposit, onQueueCountChange }) {
   const [queue, setQueue] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [settlementResult, setSettlementResult] = useState(null)
-  const [settlementError, setSettlementError] = useState(null)
-  const [settling, setSettling] = useState(false)
-
-  const [actionCount, setActionCount] = useState(0) // incremented after approve/reject to show "all caught up"
 
   const fetchQueue = useCallback(async () => {
     try {
       const resp = await api.getQueue()
-      setQueue(resp.data || [])
+      const data = resp.data || []
+      setQueue(data)
+      onQueueCountChange?.(data.length)
       setError(null)
     } catch (err) {
       setError(err?.error || 'Failed to load operator queue')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onQueueCountChange])
 
   useEffect(() => {
     fetchQueue()
@@ -227,91 +40,63 @@ export default function ReviewQueue() {
     return () => clearInterval(timer)
   }, [fetchQueue])
 
-  async function handleTriggerSettlement() {
-    const today = new Date().toISOString().slice(0, 10)
-    if (!window.confirm(`Trigger EOD settlement for ${today}?`)) return
-    setSettling(true)
-    setSettlementResult(null)
-    setSettlementError(null)
-    try {
-      const resp = await api.triggerSettlement(today)
-      setSettlementResult(resp.data)
-    } catch (err) {
-      setSettlementError(err?.error || 'Settlement failed')
-    } finally {
-      setSettling(false)
-    }
+  if (loading) return <p style={{ color: '#6b7280', fontSize: 13 }}>Loading queue…</p>
+  if (error) return <p style={{ color: '#dc2626', fontSize: 13 }}>{error}</p>
+
+  if (queue.length === 0) {
+    return (
+      <p style={{ color: '#6b7280', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>
+        No flagged deposits in queue.
+      </p>
+    )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-800">Operator Review Queue</h2>
-          {queue.length > 0 && (
-            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded-full">
-              {queue.length} pending
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400">Refreshes every 5s</span>
-          <button
-            onClick={handleTriggerSettlement}
-            disabled={settling}
-            className="px-4 py-2 bg-blue-700 text-white text-sm font-medium rounded hover:bg-blue-800 disabled:opacity-50"
-          >
-            {settling ? 'Running Settlement…' : 'Trigger EOD Settlement'}
-          </button>
-        </div>
+    <div>
+      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10 }}>
+        Refreshes every 5s · Click a row to review
+      </p>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              {['Transfer ID', 'Account', 'Amount', 'Flag Reason', 'Submitted', 'Time in Queue'].map(h => (
+                <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {queue.map(deposit => (
+              <tr
+                key={deposit.transfer_id}
+                onClick={() => onSelectDeposit?.(deposit)}
+                style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fffbeb'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = ''}
+              >
+                <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 11, color: '#6b7280' }}>
+                  {deposit.transfer_id?.slice(0, 8)}…
+                </td>
+                <td style={{ padding: '8px 12px' }}>{deposit.account_id}</td>
+                <td style={{ padding: '8px 12px', fontWeight: 500 }}>{fmtCents(deposit.amount_cents)}</td>
+                <td style={{ padding: '8px 12px' }}>
+                  {deposit.flag_reason ? (
+                    <span style={{ backgroundColor: '#fff7ed', color: '#c2410c', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>
+                      {deposit.flag_reason}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td style={{ padding: '8px 12px', color: '#6b7280', whiteSpace: 'nowrap', fontSize: 12 }}>
+                  {new Date(deposit.created_at).toLocaleString()}
+                </td>
+                <td style={{ padding: '8px 12px', color: '#d97706', fontWeight: 600 }}>
+                  {timeInQueue(deposit.created_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-
-      {settlementResult && (
-        <div className={`p-3 border rounded text-sm space-y-1 ${settlementResult.status === 'rolled_to_next_day' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
-          {settlementResult.status === 'rolled_to_next_day' ? (
-            <>
-              <p className="font-medium">After-cutoff: deposits rolled to next business day</p>
-              <p>{settlementResult.deposits_rolled_to_next_day} deposit(s) queued for {settlementResult.next_settlement_date}</p>
-            </>
-          ) : (
-            <>
-              <p className="font-medium">Settlement complete</p>
-              <p>Batch ID: <span className="font-mono">{settlementResult.batch_id}</span></p>
-              <p>{settlementResult.deposit_count} deposit(s) · total {settlementResult.total_amount_cents != null ? `$${(settlementResult.total_amount_cents / 100).toFixed(2)}` : '—'}</p>
-              {settlementResult.file_path && <p>File: {settlementResult.file_path}</p>}
-              {settlementResult.deposits_rolled_to_next_day > 0 && (
-                <p className="text-yellow-700">{settlementResult.deposits_rolled_to_next_day} deposit(s) after cutoff rolled to {settlementResult.next_settlement_date}</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {settlementError && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-          Settlement error: {settlementError}
-        </div>
-      )}
-
-      {loading && <p className="text-sm text-gray-500">Loading queue…</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      {!loading && queue.length === 0 && !error && (
-        <div className="py-12 text-center text-gray-500">
-          {actionCount > 0
-            ? <p className="text-sm font-medium text-green-700">All caught up! No more items in queue.</p>
-            : <p className="text-sm">No flagged deposits in queue.</p>
-          }
-        </div>
-      )}
-
-      {queue.map(deposit => (
-        <CheckCard
-          key={deposit.transfer_id}
-          deposit={deposit}
-          onAction={() => { setActionCount(n => n + 1); fetchQueue() }}
-        />
-      ))}
     </div>
   )
 }

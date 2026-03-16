@@ -74,6 +74,61 @@ func (h *Handler) Trigger(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": batch})
 }
 
+// ListBatches returns all settlement batches.
+// GET /api/v1/settlement/batches
+func (h *Handler) ListBatches(c *gin.Context) {
+	batches, err := h.svc.ListBatches(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to list settlement batches",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	if batches == nil {
+		batches = []Batch{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": batches})
+}
+
+// GetBatch returns a single settlement batch with its deposits.
+// GET /api/v1/settlement/batches/:id
+func (h *Handler) GetBatch(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	detail, err := h.svc.GetBatchWithDeposits(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": detail})
+}
+
+// GetEODStatus returns the current EOD cutoff status and pending deposit count.
+// GET /api/v1/settlement/eod-status
+func (h *Handler) GetEODStatus(c *gin.Context) {
+	status, err := h.svc.GetEODStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get EOD status",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": status})
+}
+
 // Retry re-attempts bank submission for a batch in retry_pending state.
 // POST /api/v1/operator/settlement/retry/:batch_id
 func (h *Handler) Retry(c *gin.Context) {

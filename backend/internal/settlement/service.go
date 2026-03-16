@@ -390,3 +390,133 @@ func (s *Service) RetryBatch(ctx context.Context, batchID uuid.UUID) (*Batch, er
 
 	return batch, nil
 }
+
+// BatchDetail extends Batch with the list of deposits included in the batch.
+type BatchDetail struct {
+	*Batch
+	Deposits []*models.Transfer `json:"deposits"`
+}
+
+// EODStatus describes the current settlement window.
+type EODStatus struct {
+	CurrentTime         time.Time `json:"current_time"`
+	CutoffTime          time.Time `json:"cutoff_time"`
+	PastCutoff          bool      `json:"past_cutoff"`
+	PendingDepositCount int       `json:"pending_deposit_count"`
+	PendingAmountCents  int64     `json:"pending_amount_cents"`
+}
+
+// ListBatches returns all settlement batches ordered newest first.
+func (s *Service) ListBatches(ctx context.Context) ([]Batch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, batch_date, file_path, deposit_count, total_amount_cents,
+		       status, bank_reference, retry_count, last_retry_at, created_at
+		FROM settlement_batches
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: listing batches: %w", err)
+	}
+	defer rows.Close()
+
+	var batches []Batch
+	for rows.Next() {
+		var b Batch
+		var filePath, bankRef sql.NullString
+		var lastRetryAt sql.NullTime
+		if err := rows.Scan(
+			&b.ID, &b.BatchDate, &filePath, &b.DepositCount, &b.TotalAmountCents,
+			&b.Status, &bankRef, &b.RetryCount, &lastRetryAt, &b.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: scanning batch row: %w", err)
+		}
+		if filePath.Valid {
+			b.FilePath = &filePath.String
+		}
+		if bankRef.Valid {
+			b.BankReference = &bankRef.String
+		}
+		if lastRetryAt.Valid {
+			b.LastRetryAt = &lastRetryAt.Time
+		}
+		batches = append(batches, b)
+	}
+	return batches, rows.Err()
+}
+
+// GetBatchWithDeposits returns a batch and the transfers assigned to it.
+func (s *Service) GetBatchWithDeposits(ctx context.Context, batchID uuid.UUID) (*BatchDetail, error) {
+	batch, err := s.getBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, account_id, amount_cents, declared_amount_cents, status, flagged,
+		       flag_reason, contribution_type, vendor_transaction_id, micr_routing,
+		       micr_account, micr_serial, micr_confidence, ocr_amount_cents,
+		       front_image_ref, back_image_ref, settlement_batch_id, return_reason,
+		       created_at, updated_at
+		FROM transfers
+		WHERE settlement_batch_id = $1
+		ORDER BY created_at ASC`, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying batch deposits: %w", err)
+	}
+	defer rows.Close()
+
+	var deposits []*models.Transfer
+	for rows.Next() {
+		var t models.Transfer
+		var settlementBatchIDStr sql.NullString
+		if err := rows.Scan(
+			&t.ID, &t.AccountID, &t.AmountCents, &t.DeclaredAmountCents,
+			&t.Status, &t.Flagged, &t.FlagReason, &t.ContributionType,
+			&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
+			&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
+			&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
+			&t.ReturnReason, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: scanning deposit row: %w", err)
+		}
+		if settlementBatchIDStr.Valid {
+			id, _ := uuid.Parse(settlementBatchIDStr.String)
+			t.SettlementBatchID = &id
+		}
+		deposits = append(deposits, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if deposits == nil {
+		deposits = []*models.Transfer{}
+	}
+
+	return &BatchDetail{Batch: batch, Deposits: deposits}, nil
+}
+
+// GetEODStatus returns the current cutoff state and count of deposits awaiting settlement.
+func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
+	now := time.Now().UTC()
+	ct, _ := time.LoadLocation("America/Chicago")
+	y, m, d := now.In(ct).Date()
+	cutoff := time.Date(y, m, d, 18, 30, 0, 0, ct).UTC()
+
+	var count int
+	var totalCents int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_cents),0)
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL`).
+		Scan(&count, &totalCents)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying pending deposits: %w", err)
+	}
+
+	return &EODStatus{
+		CurrentTime:         now,
+		CutoffTime:          cutoff,
+		PastCutoff:          now.After(cutoff),
+		PendingDepositCount: count,
+		PendingAmountCents:  totalCents,
+	}, nil
+}

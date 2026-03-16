@@ -230,6 +230,23 @@ func main() {
 		ops.POST("/settlement/retry/:batch_id", settlementHandler.Retry)
 	}
 
+	// Settlement read endpoints (operator auth)
+	settle := r.Group("/api/v1/settlement")
+	settle.Use(middleware.OperatorAuth())
+	{
+		settle.GET("/batches", settlementHandler.ListBatches)
+		settle.GET("/batches/:id", settlementHandler.GetBatch)
+		settle.GET("/eod-status", settlementHandler.GetEODStatus)
+	}
+
+	// Admin endpoints (operator auth)
+	admin := r.Group("/api/v1/admin")
+	admin.Use(middleware.OperatorAuth())
+	{
+		admin.GET("/deposits/:id/trace", depositHandler.GetTrace)
+		admin.GET("/deposits", depositHandler.List)
+	}
+
 	log.Printf("Starting server on :%s", cfg.ServerPort)
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
 		log.Fatalf("Server failed to start: %v", err)

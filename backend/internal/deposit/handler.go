@@ -301,6 +301,37 @@ func (h *Handler) ServeImage(c *gin.Context) {
 	c.File(imgPath)
 }
 
+// GetTrace handles GET /api/v1/admin/deposits/:id/trace.
+// Returns the full lifecycle trace: transfer + state history + audit log + ledger + notifications.
+func (h *Handler) GetTrace(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid transfer ID",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	trace, err := h.svc.GetTrace(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, models.ErrTransferNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "transfer not found",
+				"code":  "TRANSFER_NOT_FOUND",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to retrieve deposit trace",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": trace})
+}
+
 // Return handles POST /api/v1/operator/deposits/:id/return.
 // Body: { "return_reason": "insufficient_funds", "bank_reference": "RET-001" }
 func (h *Handler) Return(c *gin.Context) {

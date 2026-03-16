@@ -100,6 +100,38 @@ export const api = {
     }).then(handleResponse)
   },
 
+  // Settlement read endpoints
+  listBatches: () =>
+    fetch('/api/v1/settlement/batches', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getBatch: (batchId) =>
+    fetch(`/api/v1/settlement/batches/${batchId}`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getEODStatus: () =>
+    fetch('/api/v1/settlement/eod-status', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  // Admin endpoints
+  getDepositTrace: (transferId) =>
+    fetch(`/api/v1/admin/deposits/${transferId}/trace`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  listAllDeposits: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return fetch(`/api/v1/admin/deposits${qs ? '?' + qs : ''}`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse)
+  },
+
+  getHealth: () =>
+    fetch('/health').then(handleResponse),
+
   // Notification endpoints
   getNotifications: (accountId) =>
     fetch(`/api/v1/notifications?account_id=${accountId}`, {

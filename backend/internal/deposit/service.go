@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/models"
+	"github.com/apex/mcd/internal/notification"
 	"github.com/apex/mcd/internal/state"
 	"github.com/apex/mcd/internal/vendor"
 	"github.com/google/uuid"
@@ -459,4 +461,119 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		t.SettlementBatchID = &id
 	}
 	return &t, nil
+}
+
+// TraceAuditEntry is an audit log entry within a deposit trace.
+type TraceAuditEntry struct {
+	ID         string         `json:"id"`
+	OperatorID string         `json:"operator_id"`
+	Action     string         `json:"action"`
+	Notes      string         `json:"notes"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// TraceLedgerEntry is a ledger entry within a deposit trace.
+type TraceLedgerEntry struct {
+	ID            string    `json:"id"`
+	SubType       string    `json:"sub_type"`
+	AmountCents   int64     `json:"amount_cents"`
+	FromAccountID string    `json:"from_account_id"`
+	ToAccountID   string    `json:"to_account_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// Trace is the full lifecycle record for a single deposit.
+type Trace struct {
+	Transfer         *models.Transfer             `json:"transfer"`
+	StateTransitions []models.StateTransition     `json:"state_transitions"`
+	AuditLogs        []TraceAuditEntry            `json:"audit_logs"`
+	LedgerEntries    []TraceLedgerEntry           `json:"ledger_entries"`
+	Notifications    []notification.Notification  `json:"notifications"`
+}
+
+// GetTrace assembles the full lifecycle trace for a transfer.
+func (s *Service) GetTrace(ctx context.Context, transferID uuid.UUID) (*Trace, error) {
+	transfer, stateHistory, err := s.GetByID(ctx, transferID)
+	if err != nil {
+		return nil, err
+	}
+	if stateHistory == nil {
+		stateHistory = []models.StateTransition{}
+	}
+
+	// Audit logs
+	auditRows, err := s.db.QueryContext(ctx, `
+		SELECT id, operator_id, action, notes, metadata, created_at
+		FROM audit_logs WHERE transfer_id = $1 ORDER BY created_at ASC`, transferID)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace audit logs for %s: %w", transferID, err)
+	}
+	defer auditRows.Close()
+
+	var auditLogs []TraceAuditEntry
+	for auditRows.Next() {
+		var e TraceAuditEntry
+		var metaRaw []byte
+		if err := auditRows.Scan(&e.ID, &e.OperatorID, &e.Action, &e.Notes, &metaRaw, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("deposit: scanning audit row: %w", err)
+		}
+		if metaRaw != nil {
+			_ = json.Unmarshal(metaRaw, &e.Metadata)
+		}
+		auditLogs = append(auditLogs, e)
+	}
+	if auditLogs == nil {
+		auditLogs = []TraceAuditEntry{}
+	}
+
+	// Ledger entries
+	ledgerRows, err := s.db.QueryContext(ctx, `
+		SELECT id, sub_type, amount_cents, from_account_id, to_account_id, created_at
+		FROM ledger_entries WHERE transfer_id = $1 ORDER BY created_at ASC`, transferID)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace ledger entries for %s: %w", transferID, err)
+	}
+	defer ledgerRows.Close()
+
+	var ledgerEntries []TraceLedgerEntry
+	for ledgerRows.Next() {
+		var e TraceLedgerEntry
+		if err := ledgerRows.Scan(&e.ID, &e.SubType, &e.AmountCents, &e.FromAccountID, &e.ToAccountID, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("deposit: scanning ledger row: %w", err)
+		}
+		ledgerEntries = append(ledgerEntries, e)
+	}
+	if ledgerEntries == nil {
+		ledgerEntries = []TraceLedgerEntry{}
+	}
+
+	// Notifications
+	notifRepo := notification.NewRepo(s.db)
+	allNotifs, err := notifRepo.GetByAccount(ctx, transfer.AccountID, false)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace notifications for %s: %w", transferID, err)
+	}
+	var notifs []notification.Notification
+	for _, n := range allNotifs {
+		if n.TransferID == transferID.String() {
+			notifs = append(notifs, n)
+		}
+	}
+	if notifs == nil {
+		notifs = []notification.Notification{}
+	}
+
+	return &Trace{
+		Transfer:         transfer,
+		StateTransitions: stateHistory,
+		AuditLogs:        auditLogs,
+		LedgerEntries:    ledgerEntries,
+		Notifications:    notifs,
+	}, nil
+}
+
+// getLedgerEntries fetches all ledger entries for a transfer (used in deposit handler).
+func (s *Service) getLedgerEntries(ctx context.Context, transferID uuid.UUID) ([]ledger.Entry, error) {
+	return s.ledger.GetByTransferID(ctx, transferID)
 }
