@@ -2,14 +2,24 @@ import { useState } from 'react'
 import { api } from '../api.js'
 
 const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — Clean Pass (Happy Path)' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — IQA Blur (Rejected)' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — IQA Glare (Rejected)' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — MICR Failure (Operator Review)' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — Duplicate (Rejected)' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — Amount Mismatch (Operator Review)' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — Basic Pass' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — Retirement (Contribution Type)' },
+  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage' },
+  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account' },
+  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA' },
+]
+
+const SCENARIOS = [
+  { code: 'CLEAN_PASS',         label: 'Clean Pass',           description: 'All checks pass, MICR data extracted (Happy Path)' },
+  { code: 'IQA_FAIL_BLUR',      label: 'IQA Fail — Blur',      description: 'Image too blurry, prompt retake' },
+  { code: 'IQA_FAIL_GLARE',     label: 'IQA Fail — Glare',     description: 'Glare detected, prompt retake' },
+  { code: 'MICR_READ_FAILURE',  label: 'MICR Read Failure',    description: 'Cannot read MICR line, flags for operator review' },
+  { code: 'DUPLICATE_DETECTED', label: 'Duplicate Detected',   description: 'Check previously deposited, reject' },
+  { code: 'AMOUNT_MISMATCH',    label: 'Amount Mismatch',      description: 'OCR amount differs from entered amount, flags for review' },
+  { code: 'IQA_PASS',           label: 'IQA Pass (basic)',     description: 'Image quality acceptable, proceed normally' },
 ]
 
 const STATUS_STYLES = {
@@ -31,10 +41,11 @@ const STATUS_MESSAGES = {
 }
 
 /**
- * @param {{ onSuccess: (transferId: string) => void }} props
+ * @param {{ onSuccess: (transferId: string) => void, initialAccountId?: string }} props
  */
-export default function DepositForm({ onSuccess }) {
-  const [accountId, setAccountId] = useState('ACC-SOFI-1006')
+export default function DepositForm({ onSuccess, initialAccountId }) {
+  const [accountId, setAccountId] = useState(initialAccountId || 'ACC-SOFI-1006')
+  const [scenario, setScenario] = useState('CLEAN_PASS')
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [frontFile, setFrontFile] = useState(null)
   const [backFile, setBackFile] = useState(null)
@@ -42,11 +53,32 @@ export default function DepositForm({ onSuccess }) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  // IQA-specific retake state — preserves account/amount across retakes
+  const [iqaError, setIqaError] = useState(null) // { guidance, code }
+  // Business rule violations from collect-all evaluation
+  const [violations, setViolations] = useState(null)
+  // Re-auth prompt
+  const [needsReauth, setNeedsReauth] = useState(false)
+
+  function resetImageState() {
+    setFrontFile(null)
+    setBackFile(null)
+  }
+
+  function handleRetake() {
+    setIqaError(null)
+    setError(null)
+    resetImageState()
+    // amount and accountId are preserved intentionally
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
     setResult(null)
+    setIqaError(null)
+    setViolations(null)
+    setNeedsReauth(false)
 
     const amountCents = Math.round(parseFloat(amountDollars) * 100)
     if (isNaN(amountCents) || amountCents <= 0) {
@@ -65,14 +97,34 @@ export default function DepositForm({ onSuccess }) {
     const formData = new FormData()
     formData.append('account_id', accountId)
     formData.append('amount_cents', String(amountCents))
+    formData.append('vendor_scenario', scenario)
     formData.append('front_image', front)
     formData.append('back_image', back)
 
     setLoading(true)
     try {
       const resp = await api.submitDeposit(formData)
-      setResult(resp.data)
+      const transfer = resp.data
+      // IQA failure — show retake guidance
+      if (transfer?.status === 'rejected' && transfer?.retake_guidance) {
+        setIqaError({
+          guidance: transfer.retake_guidance,
+          code: transfer.vendor_error_code || 'IQA_FAIL',
+        })
+        return
+      }
+      setResult(transfer)
     } catch (err) {
+      // 401 → session expired
+      if (err?.error === 'session_expired' || (typeof err === 'object' && err?.action === 're_authenticate')) {
+        setNeedsReauth(true)
+        return
+      }
+      // 422 collect-all violations
+      if (err?.violations) {
+        setViolations(err.violations)
+        return
+      }
       setError(err?.error || 'Submission failed. Is the backend running?')
     } finally {
       setLoading(false)
@@ -91,9 +143,80 @@ export default function DepositForm({ onSuccess }) {
 
   const status = result?.status
 
+  // Re-auth prompt
+  if (needsReauth) {
+    return (
+      <div className="max-w-lg">
+        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg space-y-3">
+          <p className="text-sm font-semibold text-yellow-800">Session Expired</p>
+          <p className="text-sm text-yellow-700">Your session has expired. Please re-authenticate to continue.</p>
+          <button
+            onClick={() => setNeedsReauth(false)}
+            className="px-4 py-2 bg-yellow-600 text-white text-sm font-medium rounded hover:bg-yellow-700"
+          >
+            Re-authenticate
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // IQA failure retake prompt
+  if (iqaError) {
+    return (
+      <div className="max-w-lg space-y-4">
+        <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+          <div className="flex items-start gap-2">
+            <span className="text-orange-500 text-lg">⚠️</span>
+            <div>
+              <p className="text-sm font-semibold text-orange-800">Image Quality Issue</p>
+              <p className="text-sm text-orange-700 mt-1">{iqaError.guidance}</p>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleRetake}
+              className="px-4 py-2 bg-blue-700 text-white text-sm font-medium rounded hover:bg-blue-800"
+            >
+              Retake Photo
+            </button>
+            <button
+              onClick={() => { setIqaError(null); setResult(null) }}
+              className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-xs text-orange-600">
+            Your account (<strong>{accountId}</strong>) and amount (<strong>${amountDollars}</strong>) will be preserved.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-lg">
       <h2 className="text-lg font-semibold text-gray-800 mb-4">Submit Check Deposit</h2>
+
+      {/* Test Configuration Panel — Vendor Service stub control, not investor-facing */}
+      <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1">
+          Vendor Service Stub — Test Scenario
+        </p>
+        <p className="text-xs text-amber-700 mb-3">
+          Controls how the stub responds. Independent of the investor account selected below.
+        </p>
+        <select
+          value={scenario}
+          onChange={e => setScenario(e.target.value)}
+          className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+        >
+          {SCENARIOS.map(s => (
+            <option key={s.code} value={s.code}>{s.label} — {s.description}</option>
+          ))}
+        </select>
+      </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
@@ -181,6 +304,20 @@ export default function DepositForm({ onSuccess }) {
       {error && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {violations && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded space-y-2">
+          <p className="text-sm font-semibold text-red-800">Deposit could not be processed — please fix all issues:</p>
+          <ul className="space-y-1">
+            {violations.map((v, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-red-700">
+                <span className="mt-0.5 text-red-400">•</span>
+                <span><strong>{v.rule}:</strong> {v.message}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

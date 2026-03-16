@@ -12,26 +12,49 @@ type Stub struct{}
 // NewStub creates a new vendor stub.
 func NewStub() *Stub { return &Stub{} }
 
-// Validate returns a deterministic response based on the last 4 characters of the AccountID.
+// Validate returns a deterministic response based on req.Scenario when set, falling
+// back to the last 4 characters of AccountID for backward compatibility with tests
+// that construct Request without a Scenario field.
 func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
-	suffix := extractSuffix(req.AccountID)
 	txID := "VND-" + uuid.New().String()
 
-	switch suffix {
-	case "1001":
+	scenario := req.Scenario
+	if scenario == "" {
+		scenario = scenarioFromSuffix(extractSuffix(req.AccountID))
+	}
+
+	switch scenario {
+	case "IQA_FAIL_BLUR":
 		return iqaFailBlur(txID), nil
-	case "1002":
+	case "IQA_FAIL_GLARE":
 		return iqaFailGlare(txID), nil
-	case "1003":
+	case "MICR_READ_FAILURE":
 		return micrFailure(txID), nil
-	case "1004":
+	case "DUPLICATE_DETECTED":
 		return duplicateDetected(txID), nil
-	case "1005":
+	case "AMOUNT_MISMATCH":
 		return amountMismatch(txID, req.DeclaredAmountCents), nil
-	case "1006", "0000":
-		return cleanPass(txID, req.DeclaredAmountCents), nil
 	default:
 		return cleanPass(txID, req.DeclaredAmountCents), nil
+	}
+}
+
+// scenarioFromSuffix maps the legacy account ID suffix to a scenario code.
+// Preserves backward compatibility for existing tests that set AccountID but not Scenario.
+func scenarioFromSuffix(suffix string) string {
+	switch suffix {
+	case "1001":
+		return "IQA_FAIL_BLUR"
+	case "1002":
+		return "IQA_FAIL_GLARE"
+	case "1003":
+		return "MICR_READ_FAILURE"
+	case "1004":
+		return "DUPLICATE_DETECTED"
+	case "1005":
+		return "AMOUNT_MISMATCH"
+	default:
+		return "CLEAN_PASS"
 	}
 }
 
@@ -49,6 +72,7 @@ func iqaFailBlur(txID string) *Response {
 	return &Response{
 		Status:         "fail",
 		IQAResult:      "fail_blur",
+		RetakeGuidance: "Image is too blurry. Hold the phone steady and ensure the check is in focus before capturing.",
 		DuplicateCheck: "clear",
 		TransactionID:  txID,
 		ErrorCode:      &code,
@@ -61,6 +85,7 @@ func iqaFailGlare(txID string) *Response {
 	return &Response{
 		Status:         "fail",
 		IQAResult:      "fail_glare",
+		RetakeGuidance: "Glare detected on check image. Move to a location with even lighting and avoid direct light sources.",
 		DuplicateCheck: "clear",
 		TransactionID:  txID,
 		ErrorCode:      &code,

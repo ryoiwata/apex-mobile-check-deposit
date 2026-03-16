@@ -25,9 +25,9 @@ const STATUS_STYLES = {
 }
 
 /**
- * @param {{ initialTransferId: string | null }} props
+ * @param {{ initialTransferId: string | null, onStartNewDeposit?: (accountId: string) => void }} props
  */
-export default function TransferStatus({ initialTransferId }) {
+export default function TransferStatus({ initialTransferId, onStartNewDeposit }) {
   const [inputId, setInputId] = useState(initialTransferId || '')
   const [transfer, setTransfer] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -160,6 +160,28 @@ export default function TransferStatus({ initialTransferId }) {
             <FieldRow label="Created" value={fmtDate(transfer.created_at)} />
             <FieldRow label="Updated" value={fmtDate(transfer.updated_at)} />
           </div>
+
+          {/* Return notification */}
+          {transfer.status === 'returned' && (
+            <div className="p-4 bg-orange-50 border-t border-orange-200 space-y-2">
+              <p className="text-sm font-semibold text-orange-800">Check Returned</p>
+              {transfer.return_reason && (
+                <p className="text-sm text-orange-700">Reason: <strong>{transfer.return_reason}</strong></p>
+              )}
+              <p className="text-sm text-orange-700">
+                A $30.00 return fee has been deducted from your account.
+              </p>
+              <p className="text-sm text-orange-600">You may submit a new deposit with a different check.</p>
+              {onStartNewDeposit && (
+                <button
+                  onClick={() => onStartNewDeposit(transfer.account_id)}
+                  className="mt-1 px-4 py-2 bg-blue-700 text-white text-sm font-medium rounded hover:bg-blue-800"
+                >
+                  Start New Deposit
+                </button>
+              )}
+            </div>
+          )}
 
           {/* State history */}
           {transfer.state_history?.length > 0 && (

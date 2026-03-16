@@ -43,6 +43,9 @@ type Transfer struct {
 	ReturnReason        *string        `json:"return_reason,omitempty" db:"return_reason"`
 	CreatedAt           time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at" db:"updated_at"`
+	// Transient fields — not stored in DB, populated in-memory from vendor response.
+	RetakeGuidance  *string `json:"retake_guidance,omitempty" db:"-"`
+	VendorErrorCode *string `json:"vendor_error_code,omitempty" db:"-"`
 }
 
 // StateTransition is an entry in the state_transitions audit table.

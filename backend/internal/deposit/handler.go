@@ -2,11 +2,13 @@ package deposit
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -134,10 +136,20 @@ func (h *Handler) Submit(c *gin.Context) {
 		DeclaredAmountCents: amountCents, // declared == submitted for MVP
 		FrontImageRef:       frontPath,
 		BackImageRef:        backPath,
+		VendorScenario:      c.PostForm("vendor_scenario"), // optional; empty → stub fallback
 	}
 
 	transfer, err := h.svc.Submit(c.Request.Context(), req)
 	if err != nil {
+		// Collect-all business rule violations → 422 with full violations array
+		var cae *funding.CollectAllError
+		if errors.As(err, &cae) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":      "business_rules_failed",
+				"violations": cae.Violations,
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 			"code":  "INTERNAL_ERROR",
@@ -312,5 +324,19 @@ func (h *Handler) Return(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": transfer})
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"transfer_id":           transfer.ID,
+			"status":                transfer.Status,
+			"return_reason":         body.ReturnReason,
+			"original_amount_cents": transfer.AmountCents,
+			"fee_cents":             h.cfg.ReturnFeeCents,
+			"total_debit_cents":     transfer.AmountCents + h.cfg.ReturnFeeCents,
+			"message": fmt.Sprintf(
+				"Your check deposit was returned by the bank. A $%.2f return fee has been deducted from your account.",
+				float64(h.cfg.ReturnFeeCents)/100,
+			),
+			"action": "new_deposit",
+		},
+	})
 }

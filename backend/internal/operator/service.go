@@ -191,6 +191,58 @@ func (s *Service) Reject(
 	return transfer, nil
 }
 
+// OverrideContributionType updates the contribution type on a flagged deposit before approval
+// and writes an "override" audit log entry. Returns ErrTransferNotReviewable if the transfer
+// is not in Analyzing state with flagged=true.
+func (s *Service) OverrideContributionType(
+	ctx context.Context,
+	transferID uuid.UUID,
+	operatorID, contributionType string,
+) (*models.Transfer, error) {
+	transfer, err := s.getTransferByID(ctx, transferID)
+	if err != nil {
+		return nil, err
+	}
+
+	if transfer.Status != models.StatusAnalyzing || !transfer.Flagged {
+		return nil, fmt.Errorf("operator: %w: transfer %s (status=%s, flagged=%v)",
+			models.ErrTransferNotReviewable, transferID, transfer.Status, transfer.Flagged)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("operator: beginning override transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	prev := ""
+	if transfer.ContributionType != nil {
+		prev = *transfer.ContributionType
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE transfers SET contribution_type=$1, updated_at=NOW() WHERE id=$2`,
+		contributionType, transferID); err != nil {
+		return nil, fmt.Errorf("operator: updating contribution type: %w", err)
+	}
+
+	if err := LogActionTx(ctx, tx, operatorID, "override", transferID, "",
+		map[string]any{
+			"field":      "contribution_type",
+			"prev_value": prev,
+			"new_value":  contributionType,
+		}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("operator: committing override: %w", err)
+	}
+
+	transfer.ContributionType = &contributionType
+	return transfer, nil
+}
+
 // GetAuditLog retrieves audit entries, optionally filtered by transfer ID.
 func (s *Service) GetAuditLog(ctx context.Context, transferID *uuid.UUID) ([]AuditEntry, error) {
 	return GetAuditLog(ctx, s.db, transferID)

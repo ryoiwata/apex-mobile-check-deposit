@@ -114,6 +114,32 @@ func TestStub_AmountMismatch_1005_Flagged(t *testing.T) {
 	assert.Equal(t, declared+5000, *resp.OCRAmountCents)
 }
 
+func TestVendorFlow_IQABlur_RetakeGuidance(t *testing.T) {
+	stub := NewStub()
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "IQA_FAIL_BLUR", DeclaredAmountCents: 100000})
+	require.NoError(t, err)
+	assert.Equal(t, "fail", resp.Status)
+	assert.Equal(t, "fail_blur", resp.IQAResult)
+	assert.NotEmpty(t, resp.RetakeGuidance, "blur failure must include retake guidance")
+}
+
+func TestVendorFlow_IQAGlare_RetakeGuidance(t *testing.T) {
+	stub := NewStub()
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "IQA_FAIL_GLARE", DeclaredAmountCents: 100000})
+	require.NoError(t, err)
+	assert.Equal(t, "fail", resp.Status)
+	assert.Equal(t, "fail_glare", resp.IQAResult)
+	assert.NotEmpty(t, resp.RetakeGuidance, "glare failure must include retake guidance")
+}
+
+func TestVendorFlow_CleanPass_NoRetakeGuidance(t *testing.T) {
+	stub := NewStub()
+	resp, err := stub.Validate(context.Background(), &Request{Scenario: "CLEAN_PASS", DeclaredAmountCents: 100000})
+	require.NoError(t, err)
+	assert.Equal(t, "pass", resp.Status)
+	assert.Empty(t, resp.RetakeGuidance, "clean pass should have no retake guidance")
+}
+
 func TestStub_Stateless_SameInputSameOutput(t *testing.T) {
 	stub := NewStub()
 	req := &Request{

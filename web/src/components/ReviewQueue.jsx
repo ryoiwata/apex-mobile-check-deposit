@@ -38,7 +38,7 @@ function CheckCard({ deposit, onAction }) {
     setActionError(null)
     try {
       await api.approveDeposit(id, { notes: 'Approved via operator UI' })
-      onAction()
+      onAction() // fires immediately — no need to wait for next poll interval
     } catch (err) {
       setActionError(err?.error || 'Approve failed')
     } finally {
@@ -53,7 +53,7 @@ function CheckCard({ deposit, onAction }) {
     setActionError(null)
     try {
       await api.rejectDeposit(id, { reason: reason || 'Rejected by operator', notes: '' })
-      onAction()
+      onAction() // fires immediately — no need to wait for next poll interval
     } catch (err) {
       setActionError(err?.error || 'Reject failed')
     } finally {
@@ -161,6 +161,8 @@ export default function ReviewQueue() {
   const [settlementError, setSettlementError] = useState(null)
   const [settling, setSettling] = useState(false)
 
+  const [actionCount, setActionCount] = useState(0) // incremented after approve/reject to show "all caught up"
+
   const fetchQueue = useCallback(async () => {
     try {
       const resp = await api.getQueue()
@@ -198,7 +200,14 @@ export default function ReviewQueue() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">Operator Review Queue</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-gray-800">Operator Review Queue</h2>
+          {queue.length > 0 && (
+            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded-full">
+              {queue.length} pending
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">Refreshes every 5s</span>
           <button
@@ -212,11 +221,23 @@ export default function ReviewQueue() {
       </div>
 
       {settlementResult && (
-        <div className="p-3 bg-green-50 border border-green-200 rounded text-sm text-green-800 space-y-1">
-          <p className="font-medium">Settlement complete</p>
-          <p>Batch ID: <span className="font-mono">{settlementResult.batch_id}</span></p>
-          <p>{settlementResult.deposit_count} deposit(s) · total {settlementResult.total_amount_cents != null ? `$${(settlementResult.total_amount_cents / 100).toFixed(2)}` : '—'}</p>
-          {settlementResult.file_path && <p>File: {settlementResult.file_path}</p>}
+        <div className={`p-3 border rounded text-sm space-y-1 ${settlementResult.status === 'rolled_to_next_day' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+          {settlementResult.status === 'rolled_to_next_day' ? (
+            <>
+              <p className="font-medium">After-cutoff: deposits rolled to next business day</p>
+              <p>{settlementResult.deposits_rolled_to_next_day} deposit(s) queued for {settlementResult.next_settlement_date}</p>
+            </>
+          ) : (
+            <>
+              <p className="font-medium">Settlement complete</p>
+              <p>Batch ID: <span className="font-mono">{settlementResult.batch_id}</span></p>
+              <p>{settlementResult.deposit_count} deposit(s) · total {settlementResult.total_amount_cents != null ? `$${(settlementResult.total_amount_cents / 100).toFixed(2)}` : '—'}</p>
+              {settlementResult.file_path && <p>File: {settlementResult.file_path}</p>}
+              {settlementResult.deposits_rolled_to_next_day > 0 && (
+                <p className="text-yellow-700">{settlementResult.deposits_rolled_to_next_day} deposit(s) after cutoff rolled to {settlementResult.next_settlement_date}</p>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -231,12 +252,19 @@ export default function ReviewQueue() {
 
       {!loading && queue.length === 0 && !error && (
         <div className="py-12 text-center text-gray-500">
-          <p className="text-sm">No flagged deposits in queue.</p>
+          {actionCount > 0
+            ? <p className="text-sm font-medium text-green-700">All caught up! No more items in queue.</p>
+            : <p className="text-sm">No flagged deposits in queue.</p>
+          }
         </div>
       )}
 
       {queue.map(deposit => (
-        <CheckCard key={deposit.transfer_id} deposit={deposit} onAction={fetchQueue} />
+        <CheckCard
+          key={deposit.transfer_id}
+          deposit={deposit}
+          onAction={() => { setActionCount(n => n + 1); fetchQueue() }}
+        />
       ))}
     </div>
   )

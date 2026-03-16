@@ -73,6 +73,13 @@ export const api = {
       body: JSON.stringify({ batch_date: batchDate }),
     }).then(handleResponse),
 
+  overrideContributionType: (id, contributionType) =>
+    fetch(`/api/v1/operator/deposits/${id}/contribution-type`, {
+      method: 'PATCH',
+      headers: operatorHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ contribution_type: contributionType }),
+    }).then(handleResponse),
+
   returnDeposit: (id, body) =>
     fetch(`/api/v1/operator/deposits/${id}/return`, {
       method: 'POST',

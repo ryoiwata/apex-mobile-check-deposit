@@ -4,6 +4,45 @@ Key architectural and implementation decisions made during development. Each ent
 
 ---
 
+## Collect-All Rule Evaluation vs. Fail-Fast
+
+**Choice:** The Funding Service evaluates every business rule regardless of prior failures and returns the complete list of violations in a single response.
+
+**Alternatives considered:** Fail-fast (stop at first failure and return immediately), sequential-with-accumulator (evaluate in order, collect failures, stop at a configurable threshold)
+
+**Rationale:** The collect-all approach directly solves a common UX frustration: an investor fixes one issue, resubmits, and immediately hits a different rejection they weren't told about. By evaluating all rules in parallel — deposit limit, contribution cap, duplicate check, account eligibility — and returning every violation at once, the investor can fix everything in a single correction cycle. This reduces resubmission loops and support tickets.
+
+The implementation evaluates three rules concurrently: (1) deposit amount ≤ $5,000 limit, (2) contribution cap check, and (3) duplicate deposit detection via Redis. If any combination fails, the response includes all failures with specific error codes and human-readable messages. The investor sees something like: "Your deposit exceeds the $5,000 limit AND a duplicate check was detected" — not just the first issue.
+
+**Trade-off:** Collect-all requires running all rules even when the first failure would be sufficient to reject. For expensive rules (e.g., external API calls), this could increase cost and latency. For this system, all rules are local (database lookups and Redis checks), so the overhead is negligible.
+
+**Production note:** Keep collect-all for all local/fast rules. For rules that involve external service calls (e.g., OFAC screening, real-time fraud detection), consider a hybrid approach: evaluate all fast rules in parallel, then only call expensive external services if the fast rules pass. The response format already supports returning multiple violations, so the API contract doesn't change.
+
+---
+
+## Loop-Back Design: Every Error Path Returns to Re-Entry
+
+**Choice:** Every non-terminal error path explicitly loops back to allow the investor to correct and resubmit. No error state is a dead end.
+
+**Alternatives considered:** Terminal error states with no re-entry guidance, separate "appeal" workflow for rejected deposits
+
+**Rationale:** The system flow is designed so that every failure gives the investor a clear path forward:
+- **IQA failure** (blur/glare): Returns specific retake guidance → investor retakes photo → re-enters at the capture step
+- **Business rule failures** (collect-all): Returns all violations at once → investor fixes all issues → re-enters at the submission step
+- **Operator rejection**: Returns rejection reason → investor may submit a new deposit → re-enters at the capture step
+- **Returned/bounced check**: Notifies investor of return and $30 fee → investor may submit a new check → re-enters at the capture step
+- **Session expiration**: Prompts re-authentication → investor re-authenticates → re-enters at the submission step
+- **Settlement bank non-acknowledgment**: Settlement engine retries → re-enters at the bank submission step
+- **EOD cutoff miss**: Deposit rolls to next business day → re-enters at the cutoff check next cycle
+
+This design philosophy ensures the deposit flow never silently drops a transaction. Every state either progresses toward completion or provides an explicit corrective action.
+
+**Trade-off:** Loop-back paths mean the system must handle repeated submissions from the same investor, which requires robust duplicate detection (both at the Vendor Service level and the Funding Service level) to prevent the same check from being deposited multiple times across resubmission attempts.
+
+**Production note:** Add rate limiting on resubmission attempts (e.g., max 3 resubmissions per check per hour) to prevent abuse. Add investor-facing status tracking so they can see where their deposit is in the loop-back cycle. Consider adding a "give up" option that explicitly cancels a deposit attempt for auditability.
+
+---
+
 ## Language
 
 **Choice:** Go 1.22+
@@ -102,6 +141,18 @@ Key architectural and implementation decisions made during development. Each ent
 
 ---
 
+## Operator Contribution Type Override as Separate Decision
+
+**Choice:** The operator review flow includes an explicit contribution type override step before the approve/reject decision. The operator can view the system-assigned contribution type and optionally change it before approving.
+
+**Alternatives considered:** Override as a field in the approve request body, override as a separate API call after approval
+
+**Rationale:** The override must happen before the ledger entry is created (since ledger entries are append-only). Making it a visible decision step in the operator UI ensures the operator actively considers the contribution type for every flagged deposit, rather than it being a hidden field in the approval payload. This reduces the risk of incorrect contribution types being posted to the ledger.
+
+**Production note:** No change. This is the correct UX for operators reviewing retirement-type account deposits.
+
+---
+
 ## Contribution Type: In `transfers` Table
 
 **Choice:** `contribution_type` is a column on the `transfers` table, set during `Analyzing` by the funding rules engine.
@@ -135,6 +186,18 @@ Key architectural and implementation decisions made during development. Each ent
 **Rationale:** `created_at` represents when the investor submitted the deposit — the time the investor's banking day ended. `updated_at` changes every time any status update happens, which could mean a deposit submitted at 5 PM gets excluded from the day's batch because the operator approved it at 7 PM. Using `created_at` correctly captures the investor's submission time.
 
 **Production note:** No change. This is the correct semantics. Would add explicit handling for deposits submitted on weekends/holidays (roll to next business day).
+
+---
+
+## Settlement Bank Acknowledgment: Retry with Monitoring
+
+**Choice:** The settlement engine submits the X9 file to the Settlement Bank and tracks acknowledgment status. If the bank does not acknowledge, the system retries the submission and alerts operations.
+
+**Alternatives considered:** Fire-and-forget (submit and assume success), manual-only retry (operator re-triggers)
+
+**Rationale:** Fire-and-forget creates a reconciliation nightmare — deposits would be marked Completed without confirmation. The retry loop ensures that no settlement file is silently lost. The retry mechanism loops back to the bank submission step, and after a configurable number of retries, escalates to the operator for manual intervention.
+
+**Production note:** Add exponential backoff on retries. Add a dead-letter mechanism for files that fail after N retries. Add alerting (PagerDuty) when a settlement file is not acknowledged within the SLA window.
 
 ---
 
