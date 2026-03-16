@@ -9,28 +9,31 @@ import (
 
 // InvestorAuth validates Authorization: Bearer <token> header.
 // Token must match the configured investor token.
-// Sets "investor_token" in gin context on success.
+// Sets "investor_authenticated" and "investor_token" in gin context on success.
 // Does NOT enforce which account_id is used — account_id comes from request body.
 func InvestorAuth(investorToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "unauthorized",
-				"code":  "UNAUTHORIZED",
+				"error":      "missing_token",
+				"error_type": "authentication",
+				"message":    "Authorization header is required.",
+				"action":     "authenticate",
 			})
 			return
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 		if token != investorToken {
-			// Return session_expired so the React client can show a re-auth prompt
-			// rather than a generic error. The action field tells the client what to do.
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error":  "session_expired",
-				"action": "re_authenticate",
+				"error":      "session_expired",
+				"error_type": "authentication",
+				"message":    "Your session has expired. Please sign in again.",
+				"action":     "re_authenticate",
 			})
 			return
 		}
+		c.Set("investor_authenticated", true)
 		c.Set("investor_token", token)
 		c.Next()
 	}

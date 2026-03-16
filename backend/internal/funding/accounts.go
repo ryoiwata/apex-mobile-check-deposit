@@ -19,8 +19,9 @@ func NewAccountResolver(db *sql.DB) *AccountResolver {
 }
 
 // Resolve returns the account and its correspondent's omnibus account ID.
-// Returns ErrAccountNotFound if the account doesn't exist.
-// Returns ErrAccountIneligible if the account is not active.
+// Returns ErrAccountNotFound if the account doesn't exist — this is a hard gate.
+// Does NOT check account status; ineligible accounts are reported as a collect-all
+// violation in the funding service so all issues are surfaced at once.
 func (r *AccountResolver) Resolve(ctx context.Context, accountID string) (*models.AccountWithCorrespondent, error) {
 	var acct models.AccountWithCorrespondent
 	err := r.db.QueryRowContext(ctx, `
@@ -37,10 +38,6 @@ func (r *AccountResolver) Resolve(ctx context.Context, accountID string) (*model
 	}
 	if err != nil {
 		return nil, fmt.Errorf("funding: resolving account %s: %w", accountID, err)
-	}
-	if acct.Status != "active" {
-		return nil, fmt.Errorf("funding: %w: account %s status is %s",
-			models.ErrAccountIneligible, accountID, acct.Status)
 	}
 	return &acct, nil
 }

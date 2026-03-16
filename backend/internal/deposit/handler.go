@@ -14,6 +14,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// redactAccountID masks all but the last 4 characters of an account ID.
+// "ACC-SOFI-1006" → "****1006"
+func redactAccountID(id string) string {
+	if len(id) <= 4 {
+		return "****"
+	}
+	return "****" + id[len(id)-4:]
+}
+
 // Config holds deposit handler configuration.
 type Config struct {
 	ImageStorageDir string
@@ -40,6 +49,17 @@ type transferDetailResponse struct {
 // Submit handles POST /api/v1/deposits.
 // Parses multipart form, saves images, runs full deposit pipeline.
 func (h *Handler) Submit(c *gin.Context) {
+	// Defensive session check — belt-and-suspenders if middleware is misconfigured.
+	if auth, _ := c.Get("investor_authenticated"); auth != true {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "session_invalid",
+			"error_type": "authentication",
+			"message":    "Investor session could not be verified. Please sign in again.",
+			"action":     "re_authenticate",
+		})
+		return
+	}
+
 	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "failed to parse multipart form",
@@ -141,7 +161,16 @@ func (h *Handler) Submit(c *gin.Context) {
 
 	transfer, err := h.svc.Submit(c.Request.Context(), req)
 	if err != nil {
-		// Collect-all business rule violations → 422 with full violations array
+		// Account does not exist — hard gate, 422 with structured error.
+		if errors.Is(err, models.ErrAccountNotFound) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":   "account_not_found",
+				"message": fmt.Sprintf("Account %s does not exist. Please select a valid account.", redactAccountID(req.AccountID)),
+				"action":  "select_valid_account",
+			})
+			return
+		}
+		// Collect-all business rule violations → 422 with full violations array.
 		var cae *funding.CollectAllError
 		if errors.As(err, &cae) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{

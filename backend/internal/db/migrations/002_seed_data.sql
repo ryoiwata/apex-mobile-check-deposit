@@ -14,5 +14,8 @@ INSERT INTO accounts (id, correspondent_id, account_type, status) VALUES
     ('ACC-SOFI-1005', 'CORR-SOFI', 'individual', 'active'),  -- amount mismatch
     ('ACC-SOFI-1006', 'CORR-SOFI', 'individual', 'active'),  -- clean pass
     ('ACC-SOFI-0000', 'CORR-SOFI', 'individual', 'active'),  -- basic pass
-    ('ACC-RETIRE-001','CORR-WBL',  'retirement', 'active')   -- contribution type test
+    ('ACC-RETIRE-001','CORR-WBL',  'retirement', 'active'),  -- contribution type test
+    -- Ineligible account test scenarios (account_eligibility collect-all rule)
+    ('ACC-SOFI-2001', 'CORR-SOFI', 'individual', 'suspended'), -- suspended → collect-all violation
+    ('ACC-SOFI-2002', 'CORR-SOFI', 'retirement', 'closed')     -- closed → collect-all violation
 ON CONFLICT (id) DO NOTHING;
