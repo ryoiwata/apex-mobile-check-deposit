@@ -247,6 +247,9 @@ func main() {
 	{
 		admin.GET("/deposits/:id/trace", depositHandler.GetTrace)
 		admin.GET("/deposits", depositHandler.List)
+		admin.GET("/demo/cutoff", settlementHandler.GetDemoCutoff)
+		admin.POST("/demo/cutoff", settlementHandler.SetDemoCutoff)
+		admin.DELETE("/demo/cutoff", settlementHandler.ResetDemoCutoff)
 	}
 
 	log.Printf("Starting server on :%s", cfg.ServerPort)

@@ -119,6 +119,25 @@ export const api = {
       headers: operatorHeaders(),
     }).then(handleResponse),
 
+  // Demo cutoff admin endpoints
+  getDemoCutoff: () =>
+    fetch('/api/v1/admin/demo/cutoff', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  setDemoCutoff: (hour, minute) =>
+    fetch('/api/v1/admin/demo/cutoff', {
+      method: 'POST',
+      headers: operatorHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ hour, minute }),
+    }).then(handleResponse),
+
+  resetDemoCutoff: () =>
+    fetch('/api/v1/admin/demo/cutoff', {
+      method: 'DELETE',
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
   // Admin endpoints
   getDepositTrace: (transferId) =>
     fetch(`/api/v1/admin/deposits/${transferId}/trace`, {

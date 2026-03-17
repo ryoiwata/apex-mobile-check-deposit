@@ -40,6 +40,7 @@ type Service struct {
 	outputDir   string
 	bankAckMode string // "pass" (default) or "fail" (for testing)
 	maxRetries  int
+	demoCutoff  *DemoCutoff
 }
 
 // NewService creates a settlement Service.
@@ -50,7 +51,33 @@ func NewService(db *sql.DB, machine *state.Machine, outputDir string) *Service {
 		outputDir:   outputDir,
 		bankAckMode: "pass",
 		maxRetries:  DefaultMaxRetries,
+		demoCutoff:  &DemoCutoff{},
 	}
+}
+
+// SetDemoCutoff overrides the EOD cutoff to the given hour:minute (CT, 24-hour clock).
+func (s *Service) SetDemoCutoff(hour, minute int) {
+	s.demoCutoff.Set(hour, minute)
+}
+
+// ResetDemoCutoff clears any in-memory cutoff override.
+func (s *Service) ResetDemoCutoff() {
+	s.demoCutoff.Reset()
+}
+
+// GetDemoCutoffState returns the current demo cutoff state.
+func (s *Service) GetDemoCutoffState() (hour, minute int, overridden bool) {
+	h, m := s.demoCutoff.GetEffective()
+	return h, m, s.demoCutoff.IsOverridden()
+}
+
+// effectiveCutoffTime returns the UTC cutoff for the given date,
+// applying any active demo override before falling back to the default 18:30 CT.
+func (s *Service) effectiveCutoffTime(date time.Time) time.Time {
+	ct, _ := time.LoadLocation("America/Chicago")
+	y, mo, d := date.In(ct).Date()
+	h, m := s.demoCutoff.GetEffective()
+	return time.Date(y, mo, d, h, m, 0, 0, ct).UTC()
 }
 
 // SetBankAckMode configures the bank ACK stub behavior.
@@ -190,7 +217,7 @@ func (s *Service) getBatch(ctx context.Context, batchID uuid.UUID) (*Batch, erro
 //  7. Update batch record with final counts and mark 'submitted'
 //  8. Simulate bank ACK — if acknowledged, mark 'acknowledged'; if not, mark 'retry_pending'
 func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batch, error) {
-	cutoff := CutoffTime(batchDate)
+	cutoff := s.effectiveCutoffTime(batchDate)
 	now := time.Now().UTC()
 
 	// Count deposits queued for next business day (created after today's cutoff).
@@ -401,6 +428,8 @@ type BatchDetail struct {
 type EODStatus struct {
 	CurrentTime         time.Time `json:"current_time"`
 	CutoffTime          time.Time `json:"cutoff_time"`
+	CutoffLabel         string    `json:"cutoff_label"`
+	CutoffOverridden    bool      `json:"cutoff_overridden"`
 	PastCutoff          bool      `json:"past_cutoff"`
 	PendingDepositCount int       `json:"pending_deposit_count"`
 	PendingAmountCents  int64     `json:"pending_amount_cents"`
@@ -497,9 +526,7 @@ func (s *Service) GetBatchWithDeposits(ctx context.Context, batchID uuid.UUID) (
 // GetEODStatus returns the current cutoff state and count of deposits awaiting settlement.
 func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
 	now := time.Now().UTC()
-	ct, _ := time.LoadLocation("America/Chicago")
-	y, m, d := now.In(ct).Date()
-	cutoff := time.Date(y, m, d, 18, 30, 0, 0, ct).UTC()
+	cutoff := s.effectiveCutoffTime(now)
 
 	var count int
 	var totalCents int64
@@ -515,6 +542,8 @@ func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
 	return &EODStatus{
 		CurrentTime:         now,
 		CutoffTime:          cutoff,
+		CutoffLabel:         s.demoCutoff.Label(),
+		CutoffOverridden:    s.demoCutoff.IsOverridden(),
 		PastCutoff:          now.After(cutoff),
 		PendingDepositCount: count,
 		PendingAmountCents:  totalCents,

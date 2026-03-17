@@ -1,6 +1,7 @@
 package settlement
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -127,6 +128,62 @@ func (h *Handler) GetEODStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": status})
+}
+
+// GetDemoCutoff returns the current effective cutoff override state.
+// GET /api/v1/admin/demo/cutoff
+func (h *Handler) GetDemoCutoff(c *gin.Context) {
+	hour, minute, overridden := h.svc.GetDemoCutoffState()
+	label := h.svc.demoCutoff.Label()
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"hour":       hour,
+		"minute":     minute,
+		"overridden": overridden,
+		"label":      label,
+	}})
+}
+
+// SetDemoCutoff overrides the EOD cutoff for demo purposes.
+// POST /api/v1/admin/demo/cutoff
+// Body: {"hour": 10, "minute": 0}
+func (h *Handler) SetDemoCutoff(c *gin.Context) {
+	var body struct {
+		Hour   int `json:"hour"`
+		Minute int `json:"minute"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body, expected {hour, minute}", "code": "INVALID_INPUT"})
+		return
+	}
+	if body.Hour < 0 || body.Hour > 23 || body.Minute < 0 || body.Minute > 59 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("invalid time %02d:%02d — hour must be 0-23, minute 0-59", body.Hour, body.Minute),
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+	h.svc.SetDemoCutoff(body.Hour, body.Minute)
+	label := h.svc.demoCutoff.Label()
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"hour":       body.Hour,
+		"minute":     body.Minute,
+		"overridden": true,
+		"label":      label,
+	}})
+}
+
+// ResetDemoCutoff clears any in-memory EOD cutoff override.
+// DELETE /api/v1/admin/demo/cutoff
+func (h *Handler) ResetDemoCutoff(c *gin.Context) {
+	h.svc.ResetDemoCutoff()
+	hour, minute, overridden := h.svc.GetDemoCutoffState()
+	label := h.svc.demoCutoff.Label()
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"hour":       hour,
+		"minute":     minute,
+		"overridden": overridden,
+		"label":      label,
+	}})
 }
 
 // Retry re-attempts bank submission for a batch in retry_pending state.

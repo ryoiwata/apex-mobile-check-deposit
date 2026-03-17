@@ -380,6 +380,168 @@ function BatchDetailTab({ batchId, onBack }) {
   )
 }
 
+const CUTOFF_PRESETS = [
+  { label: 'Past (10:00 AM)', hour: 10, minute: 0 },
+  { label: 'Default (6:30 PM)', hour: 18, minute: 30 },
+  { label: 'Future (11:59 PM)', hour: 23, minute: 59 },
+]
+
+function DemoControls({ onChanged }) {
+  const [cutoffState, setCutoffState] = useState(null)
+  const [customHour, setCustomHour] = useState('18')
+  const [customMinute, setCustomMinute] = useState('30')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  const fetchCutoff = useCallback(async () => {
+    try {
+      const resp = await api.getDemoCutoff()
+      setCutoffState(resp.data)
+    } catch (_) {}
+  }, [])
+
+  useEffect(() => { fetchCutoff() }, [fetchCutoff])
+
+  async function applyPreset(hour, minute) {
+    setBusy(true); setMsg(null)
+    try {
+      const resp = await api.setDemoCutoff(hour, minute)
+      setCutoffState(resp.data)
+      setMsg({ ok: true, text: `Cutoff set to ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} CT` })
+      onChanged()
+    } catch (err) {
+      setMsg({ ok: false, text: err?.error || 'Failed to set cutoff' })
+    } finally { setBusy(false) }
+  }
+
+  async function applyCustom() {
+    const h = parseInt(customHour, 10)
+    const m = parseInt(customMinute, 10)
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+      setMsg({ ok: false, text: 'Invalid time — hour 0-23, minute 0-59' })
+      return
+    }
+    await applyPreset(h, m)
+  }
+
+  async function handleReset() {
+    setBusy(true); setMsg(null)
+    try {
+      const resp = await api.resetDemoCutoff()
+      setCutoffState(resp.data)
+      setMsg({ ok: true, text: 'Cutoff reset to default (6:30 PM CT)' })
+      onChanged()
+    } catch (err) {
+      setMsg({ ok: false, text: err?.error || 'Failed to reset cutoff' })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{
+      background: '#fffbeb',
+      border: '1px solid #fcd34d',
+      borderRadius: 8,
+      padding: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#92400e' }}>
+          Demo Controls — EOD Cutoff Override
+        </p>
+        {cutoffState && (
+          <span style={{
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 4,
+            backgroundColor: cutoffState.overridden ? '#fef3c7' : '#f3f4f6',
+            color: cutoffState.overridden ? '#92400e' : '#6b7280',
+            fontWeight: 600,
+          }}>
+            {cutoffState.label}
+          </span>
+        )}
+      </div>
+
+      {/* Presets */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {CUTOFF_PRESETS.map(p => (
+          <button
+            key={p.label}
+            onClick={() => applyPreset(p.hour, p.minute)}
+            disabled={busy}
+            style={{
+              padding: '5px 12px',
+              fontSize: 12,
+              borderRadius: 4,
+              border: '1px solid #d97706',
+              backgroundColor: '#fff',
+              color: '#92400e',
+              cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom time */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>Custom (CT):</span>
+        <input
+          type="number"
+          min={0} max={23}
+          value={customHour}
+          onChange={e => setCustomHour(e.target.value)}
+          style={{ width: 52, padding: '4px 8px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 4 }}
+          placeholder="HH"
+        />
+        <span style={{ color: '#6b7280' }}>:</span>
+        <input
+          type="number"
+          min={0} max={59}
+          value={customMinute}
+          onChange={e => setCustomMinute(e.target.value)}
+          style={{ width: 52, padding: '4px 8px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 4 }}
+          placeholder="MM"
+        />
+        <button
+          onClick={applyCustom}
+          disabled={busy}
+          style={{
+            padding: '5px 12px', fontSize: 12, borderRadius: 4,
+            border: '1px solid #d97706', backgroundColor: '#d97706',
+            color: '#fff', cursor: busy ? 'not-allowed' : 'pointer',
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          Set
+        </button>
+        {cutoffState?.overridden && (
+          <button
+            onClick={handleReset}
+            disabled={busy}
+            style={{
+              padding: '5px 12px', fontSize: 12, borderRadius: 4,
+              border: '1px solid #d1d5db', backgroundColor: '#fff',
+              color: '#6b7280', cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            Reset to Default
+          </button>
+        )}
+      </div>
+
+      {msg && (
+        <p style={{ margin: 0, fontSize: 12, color: msg.ok ? '#065f46' : '#dc2626' }}>{msg.text}</p>
+      )}
+    </div>
+  )
+}
+
 function EODStatusTab() {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -430,6 +592,9 @@ function EODStatusTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Demo cutoff override controls */}
+      <DemoControls onChanged={fetchStatus} />
+
       {/* Cutoff status card */}
       <div style={{
         background: status?.past_cutoff ? '#fef2f2' : '#f0fdf4',
@@ -439,7 +604,9 @@ function EODStatusTab() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 4px' }}>EOD Cutoff (6:30 PM CT)</p>
+            <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 4px' }}>
+              EOD Cutoff {status?.cutoff_label ? `(${status.cutoff_label})` : '(6:30 PM CT)'}
+            </p>
             <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: status?.past_cutoff ? '#991b1b' : '#065f46' }}>
               {status?.past_cutoff ? 'Past cutoff' : 'Before cutoff'}
             </p>
