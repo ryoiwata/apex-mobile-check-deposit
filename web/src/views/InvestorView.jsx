@@ -3,6 +3,7 @@ import DepositForm from '../components/DepositForm.jsx'
 import TransferStatus from '../components/TransferStatus.jsx'
 import LedgerView from '../components/LedgerView.jsx'
 import NotificationPanel from '../components/NotificationPanel.jsx'
+import { ACCOUNTS } from '../accounts.js'
 
 const TABS = [
   { id: 'deposit', label: 'Deposit' },
@@ -16,17 +17,17 @@ export default function InvestorView() {
   const [activeTab, setActiveTab] = useState('deposit')
   const [transferId, setTransferId] = useState(null)
   const [accountId, setAccountId] = useState('ACC-SOFI-1006')
-  const [returnAccountId, setReturnAccountId] = useState(null)
   const [unreadCount, setUnreadCount] = useState(0)
 
-  function handleDepositSuccess(id, acctId) {
+  const selectedAccount = ACCOUNTS.find(a => a.id === accountId)
+
+  function handleDepositSuccess(id) {
     setTransferId(id)
-    if (acctId) setAccountId(acctId)
     setActiveTab('deposits')
   }
 
   function handleStartNewDeposit(acctId) {
-    setReturnAccountId(acctId)
+    if (acctId) setAccountId(acctId)
     setTransferId(null)
     setActiveTab('deposit')
   }
@@ -35,10 +36,44 @@ export default function InvestorView() {
 
   return (
     <div>
-      <div style={{ padding: '12px 0 8px', marginBottom: 8 }}>
-        <p style={{ color: '#64748b', fontSize: 13, margin: 0 }}>
-          Deposit checks, track status, and view your account.
-        </p>
+      {/* Global account selector */}
+      <div style={{
+        padding: '12px 0 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}>
+        <span style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>Account:</span>
+        <select
+          value={accountId}
+          onChange={e => setAccountId(e.target.value)}
+          style={{
+            border: '1px solid #d1d5db',
+            borderRadius: 6,
+            padding: '5px 10px',
+            fontSize: 13,
+            fontWeight: 500,
+            color: '#1e293b',
+            background: '#f8fafc',
+            cursor: 'pointer',
+            maxWidth: 360,
+          }}
+        >
+          {ACCOUNTS.map(a => (
+            <option
+              key={a.id}
+              value={a.id}
+              style={a.status !== 'active' ? { color: '#9ca3af', fontStyle: 'italic' } : undefined}
+            >
+              {a.id} — {a.label}{a.status !== 'active' ? ` (${a.status})` : ''}
+            </option>
+          ))}
+        </select>
+        {selectedAccount?.status !== 'active' && (
+          <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 500 }}>
+            {selectedAccount?.status === 'closed' ? 'Closed' : 'Suspended'}
+          </span>
+        )}
       </div>
 
       <nav style={{ borderBottom: '1px solid #e5e7eb', marginBottom: 20, display: 'flex' }}>
@@ -54,7 +89,6 @@ export default function InvestorView() {
               borderBottom: activeTab === tab.id ? `2px solid ${ACCENT}` : '2px solid transparent',
               background: 'none',
               border: 'none',
-              borderBottom: activeTab === tab.id ? `2px solid ${ACCENT}` : '2px solid transparent',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -81,8 +115,12 @@ export default function InvestorView() {
 
       {activeTab === 'deposit' && (
         <DepositForm
+          accountId={accountId}
+          onSwitchAccount={() => {
+            // Focus the global selector — scroll to top and highlight it
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }}
           onSuccess={handleDepositSuccess}
-          initialAccountId={returnAccountId}
         />
       )}
 
@@ -101,7 +139,7 @@ export default function InvestorView() {
         </>
       )}
 
-      {activeTab === 'account' && <LedgerView />}
+      {activeTab === 'account' && <LedgerView accountId={accountId} />}
     </div>
   )
 }

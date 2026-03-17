@@ -1,16 +1,5 @@
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api.js'
-
-const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA' },
-]
 
 function fmtCents(cents) {
   return `$${(cents / 100).toFixed(2)}`
@@ -26,8 +15,7 @@ const SUB_TYPE_STYLES = {
   RETURN_FEE: 'text-red-700',
 }
 
-export default function LedgerView() {
-  const [accountId, setAccountId] = useState('ACC-SOFI-1006')
+export default function LedgerView({ accountId }) {
   const [ledger, setLedger] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -46,10 +34,9 @@ export default function LedgerView() {
     }
   }, [])
 
-  function handleLoad(e) {
-    e.preventDefault()
-    fetchLedger(accountId)
-  }
+  useEffect(() => {
+    if (accountId) fetchLedger(accountId)
+  }, [accountId, fetchLedger])
 
   const entries = ledger?.entries || []
   const balance = entries.reduce((sum, e) => {
@@ -60,31 +47,25 @@ export default function LedgerView() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-gray-800">Ledger View</h2>
-
-      <form onSubmit={handleLoad} className="flex gap-2">
-        <select
-          value={accountId}
-          onChange={e => setAccountId(e.target.value)}
-          className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          {ACCOUNTS.map(a => (
-            <option key={a.id} value={a.id}>{a.label}</option>
-          ))}
-        </select>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-800">Ledger View</h2>
         <button
-          type="submit"
-          disabled={loading}
-          className="px-4 py-2 bg-blue-700 text-white text-sm font-medium rounded hover:bg-blue-800 disabled:opacity-50"
+          onClick={() => fetchLedger(accountId)}
+          disabled={loading || !accountId}
+          className="text-xs text-blue-600 hover:underline disabled:opacity-40"
         >
-          {loading ? 'Loading…' : 'Load Ledger'}
+          {loading ? 'Loading…' : 'Refresh'}
         </button>
-      </form>
+      </div>
 
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {error}
         </div>
+      )}
+
+      {loading && !ledger && (
+        <p className="text-sm text-gray-400 py-4 text-center">Loading ledger…</p>
       )}
 
       {ledger && (

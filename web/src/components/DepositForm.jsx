@@ -1,18 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api.js'
-
-const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage', status: 'active' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account', status: 'active' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA', status: 'active' },
-  { id: 'ACC-SOFI-2001', label: 'ACC-SOFI-2001 — SoFi Individual Brokerage', status: 'suspended' },
-  { id: 'ACC-SOFI-2002', label: 'ACC-SOFI-2002 — SoFi Traditional IRA', status: 'closed' },
-]
+import { ACCOUNTS } from '../accounts.js'
 
 const SCENARIOS = [
   { code: 'CLEAN_PASS',         label: 'Clean Pass',           description: 'All checks pass, MICR data extracted (Happy Path)' },
@@ -43,10 +31,9 @@ const STATUS_MESSAGES = {
 }
 
 /**
- * @param {{ onSuccess: (transferId: string) => void, initialAccountId?: string }} props
+ * @param {{ accountId: string, onSuccess: (transferId: string) => void, onSwitchAccount?: () => void }} props
  */
-export default function DepositForm({ onSuccess, initialAccountId }) {
-  const [accountId, setAccountId] = useState(initialAccountId || 'ACC-SOFI-1006')
+export default function DepositForm({ accountId, onSuccess, onSwitchAccount }) {
   const [scenario, setScenario] = useState('CLEAN_PASS')
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [ocrAmountDollars, setOcrAmountDollars] = useState('')
@@ -65,9 +52,8 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
   // Amount field inline validation
   const [amountError, setAmountError] = useState(null)
   const [amountTouched, setAmountTouched] = useState(false)
-  // Account field inline validation
+  // Account field inline validation (backend errors only — selection is global)
   const [accountError, setAccountError] = useState(null)
-  const [accountWarning, setAccountWarning] = useState(null)
   // General violations that don't map to a specific field
   const [generalViolations, setGeneralViolations] = useState([])
 
@@ -90,27 +76,9 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     setAmountError(validateAmount(amountDollars))
   }
 
-  function handleAccountChange(e) {
-    const id = e.target.value
-    setAccountId(id)
-    setAccountError(null)
-    setAmountError(null)
-    setGeneralViolations([])
-    const acct = ACCOUNTS.find(a => a.id === id)
-    if (acct?.status !== 'active') {
-      setAccountWarning(acct?.status || null)
-      // Clear field state — user can't interact with them while locked
-      setAmountDollars('100.00')
-      setAmountTouched(false)
-      setFrontFile(null)
-      setBackFile(null)
-    } else {
-      setAccountWarning(null)
-    }
-  }
-
   const selectedAccount = ACCOUNTS.find(a => a.id === accountId)
   const isAccountIneligible = selectedAccount?.status === 'suspended' || selectedAccount?.status === 'closed'
+  const accountWarning = isAccountIneligible ? selectedAccount?.status : null
   const isAmountValid = !validateAmount(amountDollars)
   const canSubmit = isAmountValid && !isAccountIneligible && !loading
 
@@ -135,7 +103,6 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     setNeedsReauth(false)
     setAmountError(null)
     setAccountError(null)
-    setAccountWarning(null)
     setGeneralViolations([])
 
     const amountCents = Math.round(parseFloat(amountDollars) * 100)
@@ -198,7 +165,6 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
             setAmountTouched(true)
             setAmountError(v.message || 'Deposits are limited to $5,000.00 per check.')
           } else if (v.code === 'account_ineligible') {
-            setAccountWarning(null)
             setAccountError(v.message)
           } else {
             general.push(v)
@@ -324,23 +290,25 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
-          <select
-            value={accountId}
-            onChange={handleAccountChange}
-            className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 ${accountError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'}`}
-          >
-            {ACCOUNTS.map(a => (
-              <option
-                key={a.id}
-                value={a.id}
-                style={a.status !== 'active' ? { color: '#9ca3af', fontStyle: 'italic' } : undefined}
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-sm font-medium text-gray-700">Depositing to</label>
+            {onSwitchAccount && (
+              <button
+                type="button"
+                onClick={onSwitchAccount}
+                className="text-xs text-blue-600 hover:underline"
               >
-                {a.label}{a.status !== 'active' ? ` (${a.status})` : ''}
-              </option>
-            ))}
-          </select>
-          {accountWarning && !accountError && (
+                Switch account ↑
+              </button>
+            )}
+          </div>
+          <div className={`px-3 py-2 rounded border text-sm ${accountWarning ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+            <span className="font-mono font-medium text-gray-800">{accountId}</span>
+            {selectedAccount && (
+              <span className="ml-2 text-gray-500">— {selectedAccount.label}</span>
+            )}
+          </div>
+          {accountWarning && (
             <div className="mt-1.5 flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
               <span className="shrink-0 text-sm">⚠️</span>
               <div>
@@ -348,8 +316,8 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
                   {accountWarning === 'closed' ? 'Account Closed' : 'Account Suspended'}
                 </strong>
                 {accountWarning === 'closed'
-                  ? 'This account is permanently closed and cannot receive deposits. Select a different account to continue.'
-                  : 'This account is currently suspended and cannot receive deposits. Select a different account to continue.'}
+                  ? 'This account is permanently closed and cannot receive deposits. Use the account switcher above to select a different account.'
+                  : 'This account is currently suspended and cannot receive deposits. Use the account switcher above to select a different account.'}
               </div>
             </div>
           )}
@@ -486,7 +454,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
             <p className="text-sm text-yellow-700">Flag reason: <strong>{result.flag_reason}</strong></p>
           )}
           <button
-            onClick={() => onSuccess(result.transfer_id, accountId)}
+            onClick={() => onSuccess(result.transfer_id)}
             className="text-sm text-blue-600 hover:underline"
           >
             View transfer details →
