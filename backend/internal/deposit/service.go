@@ -39,6 +39,37 @@ type SubmitRequest struct {
 	// SimulatedOCRAmountCents is passed to the vendor stub for AMOUNT_MISMATCH scenarios
 	// so the evaluator can configure the exact OCR reading. Zero means use stub default.
 	SimulatedOCRAmountCents int64
+	// CreatedAtOverride is a demo-only field for overriding the deposit timestamp to test
+	// EOD cutoff behavior. Accepted values: "before_cutoff", "after_cutoff", "yesterday".
+	// Empty string means use actual current time.
+	CreatedAtOverride string
+}
+
+// resolveCreatedAt returns the deposit timestamp to use based on the demo override.
+// All returned times are in CT and represent today's date unless "yesterday" is specified.
+//
+//	"before_cutoff" → today 3:00 PM CT  (before the 6:30 PM cutoff)
+//	"after_cutoff"  → today 7:15 PM CT  (after the 6:30 PM cutoff, rolls to next day)
+//	"yesterday"     → yesterday 2:00 PM CT
+//	""              → actual current time
+func resolveCreatedAt(override string) time.Time {
+	ct, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		ct = time.UTC
+	}
+	now := time.Now().In(ct)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ct)
+
+	switch override {
+	case "before_cutoff":
+		return today.Add(15 * time.Hour) // 3:00 PM CT
+	case "after_cutoff":
+		return today.Add(19*time.Hour + 15*time.Minute) // 7:15 PM CT
+	case "yesterday":
+		return today.Add(-24 * time.Hour).Add(14 * time.Hour) // yesterday 2:00 PM CT
+	default:
+		return now
+	}
 }
 
 // Service orchestrates the full deposit pipeline.
@@ -71,7 +102,7 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 		FrontImageRef:       &req.FrontImageRef,
 		BackImageRef:        &req.BackImageRef,
 	}
-	if err := s.createTransfer(ctx, transfer); err != nil {
+	if err := s.createTransfer(ctx, transfer, resolveCreatedAt(req.CreatedAtOverride)); err != nil {
 		return nil, err
 	}
 
@@ -350,15 +381,17 @@ func (s *Service) ProcessReturn(ctx context.Context, transferID uuid.UUID,
 }
 
 // createTransfer inserts a new transfer row in Requested state.
-func (s *Service) createTransfer(ctx context.Context, t *models.Transfer) error {
+// createdAt is passed explicitly so demo time overrides take effect.
+func (s *Service) createTransfer(ctx context.Context, t *models.Transfer, createdAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO transfers (id, account_id, amount_cents, declared_amount_cents, status, front_image_ref, back_image_ref)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO transfers (id, account_id, amount_cents, declared_amount_cents, status, front_image_ref, back_image_ref, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
 		t.ID, t.AccountID, t.AmountCents, t.DeclaredAmountCents,
-		string(t.Status), t.FrontImageRef, t.BackImageRef)
+		string(t.Status), t.FrontImageRef, t.BackImageRef, createdAt.UTC())
 	if err != nil {
 		return fmt.Errorf("deposit: creating transfer: %w", err)
 	}
+	t.CreatedAt = createdAt.UTC()
 	return nil
 }
 

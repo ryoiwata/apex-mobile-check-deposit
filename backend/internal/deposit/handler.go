@@ -167,8 +167,9 @@ func (h *Handler) Submit(c *gin.Context) {
 		DeclaredAmountCents:     amountCents, // declared == submitted for MVP
 		FrontImageRef:           frontPath,
 		BackImageRef:            backPath,
-		VendorScenario:          c.PostForm("vendor_scenario"), // optional; empty → stub fallback
+		VendorScenario:          c.PostForm("vendor_scenario"),          // optional; empty → stub fallback
 		SimulatedOCRAmountCents: simulatedOCRCents,
+		CreatedAtOverride:       c.PostForm("created_at_override"),      // demo-only; empty → actual time
 	}
 
 	transfer, err := h.svc.Submit(c.Request.Context(), req)

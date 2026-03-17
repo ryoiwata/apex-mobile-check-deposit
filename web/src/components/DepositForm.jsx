@@ -2,6 +2,13 @@ import { useState } from 'react'
 import { api } from '../api.js'
 import { ACCOUNTS } from '../accounts.js'
 
+const TIME_SCENARIOS = [
+  { value: '',              label: 'Now (actual current time)',                        description: '' },
+  { value: 'before_cutoff', label: 'Before cutoff — today 3:00 PM CT',               description: 'Deposit timestamp set to 3:00 PM CT — included in today\'s settlement batch' },
+  { value: 'after_cutoff',  label: 'After cutoff — today 7:15 PM CT',                description: 'Deposit timestamp set to 7:15 PM CT — rolls to next business day\'s batch' },
+  { value: 'yesterday',     label: 'Yesterday — 2:00 PM CT',                          description: 'Deposit timestamp set to yesterday 2:00 PM CT — always eligible for today\'s batch' },
+]
+
 const SCENARIOS = [
   { code: 'CLEAN_PASS',         label: 'Clean Pass',           description: 'All checks pass, MICR data extracted (Happy Path)' },
   { code: 'IQA_FAIL_BLUR',      label: 'IQA Fail — Blur',      description: 'Image too blurry, prompt retake' },
@@ -35,6 +42,7 @@ const STATUS_MESSAGES = {
  */
 export default function DepositForm({ accountId, onSuccess, onSwitchAccount }) {
   const [scenario, setScenario] = useState('CLEAN_PASS')
+  const [createdAtOverride, setCreatedAtOverride] = useState('')
   const [amountDollars, setAmountDollars] = useState('100.00')
   const [ocrAmountDollars, setOcrAmountDollars] = useState('')
   const [frontFile, setFrontFile] = useState(null)
@@ -130,6 +138,9 @@ export default function DepositForm({ accountId, onSuccess, onSwitchAccount }) {
       if (!isNaN(ocrCents) && ocrCents > 0) {
         formData.append('simulated_ocr_amount_cents', String(ocrCents))
       }
+    }
+    if (createdAtOverride) {
+      formData.append('created_at_override', createdAtOverride)
     }
 
     setLoading(true)
@@ -285,6 +296,30 @@ export default function DepositForm({ accountId, onSuccess, onSwitchAccount }) {
               The operator will see this as the OCR-recognized amount vs. {amountDollars ? `$${parseFloat(amountDollars).toFixed(2)}` : 'the entered amount'} investor-entered.
             </p>
           </div>
+        )}
+      </div>
+
+      {/* Deposit Time Override — demo control for EOD cutoff testing */}
+      <div className="mb-5 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+        <p className="text-xs font-semibold text-orange-800 uppercase tracking-wide mb-1">
+          Deposit Time — Test Scenario
+        </p>
+        <p className="text-xs text-orange-700 mb-3">
+          Override deposit timestamp to test EOD cutoff behavior. Cutoff is 6:30 PM CT.
+        </p>
+        <select
+          value={createdAtOverride}
+          onChange={e => setCreatedAtOverride(e.target.value)}
+          className="w-full border border-orange-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+        >
+          {TIME_SCENARIOS.map(s => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+        {createdAtOverride && TIME_SCENARIOS.find(s => s.value === createdAtOverride)?.description && (
+          <p className="mt-2 text-xs text-orange-600">
+            {TIME_SCENARIOS.find(s => s.value === createdAtOverride).description}
+          </p>
         )}
       </div>
 
