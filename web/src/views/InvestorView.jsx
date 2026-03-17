@@ -15,7 +15,7 @@ const ACCENT = '#2563eb'
 export default function InvestorView() {
   const [activeTab, setActiveTab] = useState('deposit')
   const [transferId, setTransferId] = useState(null)
-  const [accountId, setAccountId] = useState(null)
+  const [accountId, setAccountId] = useState('ACC-SOFI-1006')
   const [returnAccountId, setReturnAccountId] = useState(null)
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -92,6 +92,7 @@ export default function InvestorView() {
             accountId={accountId}
             onSelectTransfer={(tid) => setTransferId(tid)}
             onUnreadChange={handleUnreadChange}
+            onStartNewDeposit={handleStartNewDeposit}
           />
           <TransferStatus
             initialTransferId={transferId}
