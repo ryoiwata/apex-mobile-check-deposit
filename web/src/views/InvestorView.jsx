@@ -3,6 +3,7 @@ import DepositForm from '../components/DepositForm.jsx'
 import TransferStatus from '../components/TransferStatus.jsx'
 import LedgerView from '../components/LedgerView.jsx'
 import NotificationPanel from '../components/NotificationPanel.jsx'
+import DepositList from '../components/DepositList.jsx'
 import { ACCOUNTS } from '../accounts.js'
 
 const TABS = [
@@ -131,6 +132,11 @@ export default function InvestorView() {
             onSelectTransfer={(tid) => setTransferId(tid)}
             onUnreadChange={handleUnreadChange}
             onStartNewDeposit={handleStartNewDeposit}
+          />
+          <DepositList
+            accountId={accountId}
+            selectedTransferId={transferId}
+            onSelect={(tid) => setTransferId(tid)}
           />
           <TransferStatus
             initialTransferId={transferId}
