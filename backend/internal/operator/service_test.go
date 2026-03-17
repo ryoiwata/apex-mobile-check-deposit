@@ -68,7 +68,7 @@ func TestApprove_MovesToFundsPosted(t *testing.T) {
 	defer cleanupTransfer(t, db, id)
 
 	svc := NewService(db, state.New(db), ledger.NewService(db), nil)
-	transfer, err := svc.Approve(context.Background(), id, "OP-TEST", "unit test approve", nil)
+	transfer, err := svc.Approve(context.Background(), id, "OP-TEST", "unit test approve", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, models.StatusFundsPosted, transfer.Status,
 		"approved transfer must reach funds_posted")
@@ -93,7 +93,7 @@ func TestApprove_WritesAuditLog(t *testing.T) {
 
 	const operatorID = "OP-AUDIT-TEST"
 	svc := NewService(db, state.New(db), ledger.NewService(db), nil)
-	_, err := svc.Approve(context.Background(), id, operatorID, "audit log test", nil)
+	_, err := svc.Approve(context.Background(), id, operatorID, "audit log test", nil, nil)
 	require.NoError(t, err)
 
 	entries, err := GetAuditLog(context.Background(), db, &id)
@@ -157,7 +157,7 @@ func TestOperatorFlow_ContributionOverride_BeforeApproval(t *testing.T) {
 	assert.True(t, overrideFound, "audit_logs must contain action=override with operator_id=%s", operatorID)
 
 	// Step 2: Approve after override — approval should succeed
-	approved, err := svc.Approve(context.Background(), id, operatorID, "approved after override", nil)
+	approved, err := svc.Approve(context.Background(), id, operatorID, "approved after override", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, models.StatusFundsPosted, approved.Status)
 }
@@ -176,7 +176,7 @@ func TestOperatorFlow_QueueCycling_NextItem(t *testing.T) {
 	svc := NewService(db, state.New(db), ledger.NewService(db), nil)
 
 	// Process first item
-	_, err := svc.Approve(context.Background(), id1, "OP-CYCLE-TEST", "cycle test", nil)
+	_, err := svc.Approve(context.Background(), id1, "OP-CYCLE-TEST", "cycle test", nil, nil)
 	require.NoError(t, err)
 
 	// Second item should still be in the queue

@@ -12,4 +12,5 @@ var (
 	ErrDuplicateDeposit       = errors.New("duplicate deposit detected")
 	ErrTransferNotReturnable  = errors.New("transfer must be in completed state to be returned")
 	ErrTransferNotReviewable  = errors.New("transfer must be flagged and in analyzing state")
+	ErrInvalidInput           = errors.New("invalid input")
 )

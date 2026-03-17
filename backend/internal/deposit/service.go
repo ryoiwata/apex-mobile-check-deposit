@@ -23,7 +23,7 @@ const transferSelectCols = `
 	flag_reason, contribution_type, vendor_transaction_id, micr_routing,
 	micr_account, micr_serial, micr_confidence, ocr_amount_cents,
 	front_image_ref, back_image_ref, settlement_batch_id, return_reason,
-	created_at, updated_at`
+	verified_amount_cents, created_at, updated_at`
 
 // SubmitRequest contains all data from the multipart form, prepared by the handler.
 type SubmitRequest struct {
@@ -36,6 +36,9 @@ type SubmitRequest struct {
 	// VendorScenario explicitly controls which stub response is returned.
 	// If empty, the stub falls back to the account ID suffix. Defaults to CLEAN_PASS.
 	VendorScenario string
+	// SimulatedOCRAmountCents is passed to the vendor stub for AMOUNT_MISMATCH scenarios
+	// so the evaluator can configure the exact OCR reading. Zero means use stub default.
+	SimulatedOCRAmountCents int64
 }
 
 // Service orchestrates the full deposit pipeline.
@@ -89,12 +92,13 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 
 	// 3. Call vendor stub
 	vendorReq := &vendor.Request{
-		TransferID:          transfer.ID.String(),
-		AccountID:           transfer.AccountID,
-		FrontImageRef:       req.FrontImageRef,
-		BackImageRef:        req.BackImageRef,
-		DeclaredAmountCents: transfer.DeclaredAmountCents,
-		Scenario:            req.VendorScenario,
+		TransferID:              transfer.ID.String(),
+		AccountID:               transfer.AccountID,
+		FrontImageRef:           req.FrontImageRef,
+		BackImageRef:            req.BackImageRef,
+		DeclaredAmountCents:     transfer.DeclaredAmountCents,
+		Scenario:                req.VendorScenario,
+		SimulatedOCRAmountCents: req.SimulatedOCRAmountCents,
 	}
 	vendorResp, err := s.vendor.Validate(ctx, vendorReq)
 	if err != nil {
@@ -451,7 +455,7 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
 		&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
 		&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
-		&t.ReturnReason, &t.CreatedAt, &t.UpdatedAt,
+		&t.ReturnReason, &t.VerifiedAmountCents, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

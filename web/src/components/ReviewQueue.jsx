@@ -80,7 +80,16 @@ export default function ReviewQueue({ onSelectDeposit, onQueueCountChange }) {
                 <td style={{ padding: '8px 12px' }}>{deposit.account_id}</td>
                 <td style={{ padding: '8px 12px', fontWeight: 500 }}>{fmtCents(deposit.amount_cents)}</td>
                 <td style={{ padding: '8px 12px' }}>
-                  {deposit.flag_reason ? (
+                  {deposit.flag_reason === 'amount_mismatch' ? (
+                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                      💲 Amount Mismatch
+                      {deposit.declared_amount_cents != null && deposit.ocr_amount_cents != null && (
+                        <span style={{ fontWeight: 400, marginLeft: 4 }}>
+                          ({fmtCents(deposit.declared_amount_cents)} vs {fmtCents(deposit.ocr_amount_cents)})
+                        </span>
+                      )}
+                    </span>
+                  ) : deposit.flag_reason ? (
                     <span style={{ backgroundColor: '#fff7ed', color: '#c2410c', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>
                       {deposit.flag_reason}
                     </span>

@@ -54,6 +54,7 @@ func (h *Handler) Approve(c *gin.Context) {
 	var body struct {
 		Notes                    string  `json:"notes"`
 		ContributionTypeOverride *string `json:"contribution_type_override"`
+		VerifiedAmountCents      *int64  `json:"verified_amount_cents"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -67,12 +68,26 @@ func (h *Handler) Approve(c *gin.Context) {
 	opID, _ := operatorID.(string)
 
 	transfer, err := h.svc.Approve(c.Request.Context(), transferID, opID,
-		body.Notes, body.ContributionTypeOverride)
+		body.Notes, body.ContributionTypeOverride, body.VerifiedAmountCents)
 	if err != nil {
 		if errors.Is(err, models.ErrTransferNotReviewable) || errors.Is(err, models.ErrTransferNotFound) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error": err.Error(),
 				"code":  "INVALID_STATE_TRANSITION",
+			})
+			return
+		}
+		if errors.Is(err, models.ErrInvalidInput) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error": err.Error(),
+				"code":  "INVALID_INPUT",
+			})
+			return
+		}
+		if errors.Is(err, models.ErrDepositOverLimit) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error": err.Error(),
+				"code":  "DEPOSIT_OVER_LIMIT",
 			})
 			return
 		}

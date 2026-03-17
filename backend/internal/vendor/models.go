@@ -14,6 +14,9 @@ type Request struct {
 	// Valid values: CLEAN_PASS, IQA_FAIL_BLUR, IQA_FAIL_GLARE, MICR_READ_FAILURE,
 	// DUPLICATE_DETECTED, AMOUNT_MISMATCH, IQA_PASS
 	Scenario string `json:"scenario,omitempty"`
+	// SimulatedOCRAmountCents overrides the OCR amount in AMOUNT_MISMATCH responses.
+	// If zero, the stub falls back to declared * 80 / 100 as the OCR reading.
+	SimulatedOCRAmountCents int64 `json:"simulated_ocr_amount_cents,omitempty"`
 }
 
 // MICRData represents the extracted MICR line data.

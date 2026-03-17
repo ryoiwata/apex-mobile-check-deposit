@@ -153,14 +153,22 @@ func (h *Handler) Submit(c *gin.Context) {
 		return
 	}
 
+	var simulatedOCRCents int64
+	if ocrStr := c.PostForm("simulated_ocr_amount_cents"); ocrStr != "" {
+		if v, err := strconv.ParseInt(ocrStr, 10, 64); err == nil && v > 0 {
+			simulatedOCRCents = v
+		}
+	}
+
 	req := &SubmitRequest{
-		TransferID:          transferID,
-		AccountID:           accountID,
-		AmountCents:         amountCents,
-		DeclaredAmountCents: amountCents, // declared == submitted for MVP
-		FrontImageRef:       frontPath,
-		BackImageRef:        backPath,
-		VendorScenario:      c.PostForm("vendor_scenario"), // optional; empty → stub fallback
+		TransferID:              transferID,
+		AccountID:               accountID,
+		AmountCents:             amountCents,
+		DeclaredAmountCents:     amountCents, // declared == submitted for MVP
+		FrontImageRef:           frontPath,
+		BackImageRef:            backPath,
+		VendorScenario:          c.PostForm("vendor_scenario"), // optional; empty → stub fallback
+		SimulatedOCRAmountCents: simulatedOCRCents,
 	}
 
 	transfer, err := h.svc.Submit(c.Request.Context(), req)

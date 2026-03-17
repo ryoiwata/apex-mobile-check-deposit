@@ -33,7 +33,7 @@ func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
 	case "DUPLICATE_DETECTED":
 		return duplicateDetected(txID), nil
 	case "AMOUNT_MISMATCH":
-		return amountMismatch(txID, req.DeclaredAmountCents), nil
+		return amountMismatch(txID, req.DeclaredAmountCents, req.SimulatedOCRAmountCents), nil
 	default:
 		return cleanPass(txID, req.DeclaredAmountCents), nil
 	}
@@ -118,9 +118,17 @@ func duplicateDetected(txID string) *Response {
 	}
 }
 
-func amountMismatch(txID string, declared int64) *Response {
-	// OCR reads a different amount than declared; flagged for operator review
-	ocr := declared + 5000 // OCR reads $50 more than declared
+func amountMismatch(txID string, declared, simulatedOCR int64) *Response {
+	// OCR reads a different amount than declared; flagged for operator review.
+	// Use the caller-provided OCR amount if given, otherwise default to 80% of declared
+	// (simulates a check where OCR reads lower than written amount).
+	ocr := simulatedOCR
+	if ocr == 0 || ocr == declared {
+		ocr = declared * 80 / 100 // ~20% lower than declared
+		if ocr == 0 {
+			ocr = declared - 100 // edge-case: very small declared amount
+		}
+	}
 	return &Response{
 		Status:         "flagged",
 		IQAResult:      "pass",

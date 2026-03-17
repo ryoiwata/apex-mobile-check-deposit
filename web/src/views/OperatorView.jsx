@@ -24,6 +24,7 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
   const [showRejectForm, setShowRejectForm] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [actionError, setActionError] = useState(null)
+  const [verifiedAmountDollars, setVerifiedAmountDollars] = useState('')
   const [lightbox, setLightbox] = useState(null)
   const [view, setView] = useState({ zoom: 1, x: 0, y: 0 })
   const containerRef = useRef(null)
@@ -40,6 +41,7 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
     setCtOverride(deposit?.contribution_type || '')
     setCtSuccess(false)
     setCtError(null)
+    setVerifiedAmountDollars('')
   }, [deposit?.transfer_id])
 
   if (!deposit) {
@@ -54,13 +56,29 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
   const hasMICR = !!(deposit.micr_routing || deposit.micr_account)
   const amountMismatch = deposit.ocr_amount_cents != null &&
     deposit.ocr_amount_cents !== deposit.declared_amount_cents
+  const isMismatchDeposit = deposit.flag_reason === 'amount_mismatch'
+  const verifiedAmountCents = verifiedAmountDollars
+    ? Math.round(parseFloat(verifiedAmountDollars) * 100)
+    : null
+  const canApprove = !isMismatchDeposit || (verifiedAmountCents != null && verifiedAmountCents > 0)
 
   async function handleApprove() {
-    if (!window.confirm('Approve this deposit? Funds will be provisionally posted to the investor account.')) return
+    if (isMismatchDeposit && !canApprove) {
+      setActionError('Enter the verified amount before approving an amount mismatch deposit.')
+      return
+    }
+    const confirmMsg = isMismatchDeposit
+      ? `Approve this deposit with verified amount ${fmtCents(verifiedAmountCents)}? Funds will be provisionally posted.`
+      : 'Approve this deposit? Funds will be provisionally posted to the investor account.'
+    if (!window.confirm(confirmMsg)) return
     setApproving(true)
     setActionError(null)
     try {
-      await api.approveDeposit(id, { notes: 'Approved via operator review' })
+      const body = { notes: 'Approved via operator review' }
+      if (isMismatchDeposit && verifiedAmountCents) {
+        body.verified_amount_cents = verifiedAmountCents
+      }
+      await api.approveDeposit(id, body)
       onAction?.()
     } catch (err) {
       setActionError(err?.error || 'Approve failed')
@@ -223,6 +241,53 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
             </div>
           ))}
         </div>
+
+        {isMismatchDeposit && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #fde68a' }}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#92400e', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Amount Resolution Required
+            </p>
+            <p style={{ fontSize: 12, color: '#78350f', margin: '0 0 10px' }}>
+              Investor entered <strong>{fmtCents(deposit.declared_amount_cents)}</strong>, OCR read <strong>{fmtCents(deposit.ocr_amount_cents)}</strong>.
+              Enter the correct amount to post to the ledger.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <button
+                onClick={() => setVerifiedAmountDollars((deposit.declared_amount_cents / 100).toFixed(2))}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 4, border: '1px solid #d97706', background: '#fffbeb', color: '#92400e', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Use Investor Amount ({fmtCents(deposit.declared_amount_cents)})
+              </button>
+              {deposit.ocr_amount_cents != null && (
+                <button
+                  onClick={() => setVerifiedAmountDollars((deposit.ocr_amount_cents / 100).toFixed(2))}
+                  style={{ fontSize: 12, padding: '4px 10px', borderRadius: 4, border: '1px solid #d97706', background: '#fffbeb', color: '#92400e', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Use OCR Amount ({fmtCents(deposit.ocr_amount_cents)})
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 13, color: '#374151', fontWeight: 500, whiteSpace: 'nowrap' }}>Verified Amount ($):</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                max="5000"
+                value={verifiedAmountDollars}
+                onChange={e => setVerifiedAmountDollars(e.target.value)}
+                placeholder="Enter verified amount"
+                style={{ border: `1px solid ${verifiedAmountDollars ? '#059669' : '#fbbf24'}`, borderRadius: 4, padding: '6px 10px', fontSize: 14, fontWeight: 600, width: 160 }}
+              />
+              {verifiedAmountCents > 0 && (
+                <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>→ {fmtCents(verifiedAmountCents)}</span>
+              )}
+            </div>
+            {!verifiedAmountDollars && (
+              <p style={{ fontSize: 11, color: '#c2410c', margin: '6px 0 0' }}>⚠ Verified amount required before approving</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Account context + contribution type override */}
@@ -278,10 +343,15 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button
             onClick={handleApprove}
-            disabled={approving || rejecting || showRejectForm}
-            style={{ backgroundColor: '#059669', color: 'white', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 14, fontWeight: 600, cursor: approving ? 'not-allowed' : 'pointer', opacity: approving || showRejectForm ? 0.5 : 1 }}
+            disabled={approving || rejecting || showRejectForm || !canApprove}
+            title={isMismatchDeposit && !canApprove ? 'Enter verified amount above before approving' : undefined}
+            style={{ backgroundColor: '#059669', color: 'white', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 14, fontWeight: 600, cursor: (approving || !canApprove) ? 'not-allowed' : 'pointer', opacity: (approving || showRejectForm || !canApprove) ? 0.5 : 1 }}
           >
-            {approving ? 'Approving…' : '✓ Approve Deposit'}
+            {approving
+              ? 'Approving…'
+              : isMismatchDeposit && verifiedAmountCents
+                ? `✓ Approve (${fmtCents(verifiedAmountCents)})`
+                : '✓ Approve Deposit'}
           </button>
           <button
             onClick={() => setShowRejectForm(v => !v)}

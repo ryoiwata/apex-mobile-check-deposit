@@ -18,7 +18,7 @@ const transferSelectCols = `
 	flag_reason, contribution_type, vendor_transaction_id, micr_routing,
 	micr_account, micr_serial, micr_confidence, ocr_amount_cents,
 	front_image_ref, back_image_ref, settlement_batch_id, return_reason,
-	created_at, updated_at`
+	verified_amount_cents, created_at, updated_at`
 
 // Service handles operator review queue and approve/reject workflow.
 type Service struct {
@@ -65,11 +65,13 @@ func (s *Service) GetQueue(ctx context.Context) ([]*models.Transfer, error) {
 // Approve moves a flagged deposit from Analyzing to FundsPosted in a single transaction:
 // Analyzing→Approved (state machine) + ledger.PostFundsTx + Approved→FundsPosted + audit log.
 // Returns ErrTransferNotReviewable if the transfer is not in the expected state.
+// verifiedAmountCents is required (and validated) when the transfer flag_reason is "amount_mismatch".
 func (s *Service) Approve(
 	ctx context.Context,
 	transferID uuid.UUID,
 	operatorID, notes string,
 	contributionTypeOverride *string,
+	verifiedAmountCents *int64,
 ) (*models.Transfer, error) {
 	transfer, err := s.getTransferByID(ctx, transferID)
 	if err != nil {
@@ -79,6 +81,19 @@ func (s *Service) Approve(
 	if transfer.Status != models.StatusAnalyzing || !transfer.Flagged {
 		return nil, fmt.Errorf("operator: %w: transfer %s (status=%s, flagged=%v)",
 			models.ErrTransferNotReviewable, transferID, transfer.Status, transfer.Flagged)
+	}
+
+	// Amount mismatch deposits require the operator to specify the correct amount.
+	isMismatch := transfer.FlagReason != nil && *transfer.FlagReason == "amount_mismatch"
+	if isMismatch {
+		if verifiedAmountCents == nil || *verifiedAmountCents <= 0 {
+			return nil, fmt.Errorf("operator: verified_amount_cents is required for amount_mismatch deposits: %w",
+				models.ErrInvalidInput)
+		}
+		if *verifiedAmountCents > 500000 {
+			return nil, fmt.Errorf("operator: verified_amount_cents %d exceeds $5,000 limit: %w",
+				*verifiedAmountCents, models.ErrDepositOverLimit)
+		}
 	}
 
 	// Resolve omnibus account for ledger posting.
@@ -104,6 +119,17 @@ func (s *Service) Approve(
 		transfer.ContributionType = contributionTypeOverride
 	}
 
+	// For amount_mismatch: override posting amount with operator-verified value and persist it.
+	if isMismatch && verifiedAmountCents != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE transfers SET verified_amount_cents=$1, amount_cents=$1, updated_at=NOW() WHERE id=$2`,
+			*verifiedAmountCents, transferID); err != nil {
+			return nil, fmt.Errorf("operator: storing verified amount: %w", err)
+		}
+		transfer.VerifiedAmountCents = verifiedAmountCents
+		transfer.AmountCents = *verifiedAmountCents
+	}
+
 	triggeredBy := "operator:" + operatorID
 
 	// Analyzing → Approved
@@ -123,12 +149,21 @@ func (s *Service) Approve(
 		return nil, fmt.Errorf("operator: transitioning to funds_posted: %w", err)
 	}
 
+	// Build audit metadata — include amount resolution details for mismatch deposits.
+	auditMeta := map[string]any{
+		"previous_status": string(models.StatusAnalyzing),
+		"new_status":      string(models.StatusFundsPosted),
+	}
+	if isMismatch && verifiedAmountCents != nil {
+		auditMeta["amount_resolution"] = map[string]any{
+			"declared_amount_cents": transfer.DeclaredAmountCents,
+			"ocr_amount_cents":      transfer.OCRAmountCents,
+			"verified_amount_cents": *verifiedAmountCents,
+		}
+	}
+
 	// Write audit log entry in the same transaction.
-	if err := LogActionTx(ctx, tx, operatorID, "approve", transferID, notes,
-		map[string]any{
-			"previous_status": string(models.StatusAnalyzing),
-			"new_status":      string(models.StatusFundsPosted),
-		}); err != nil {
+	if err := LogActionTx(ctx, tx, operatorID, "approve", transferID, notes, auditMeta); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +307,7 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
 		&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
 		&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
-		&t.ReturnReason, &t.CreatedAt, &t.UpdatedAt,
+		&t.ReturnReason, &t.VerifiedAmountCents, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

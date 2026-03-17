@@ -49,6 +49,7 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
   const [accountId, setAccountId] = useState(initialAccountId || 'ACC-SOFI-1006')
   const [scenario, setScenario] = useState('CLEAN_PASS')
   const [amountDollars, setAmountDollars] = useState('100.00')
+  const [ocrAmountDollars, setOcrAmountDollars] = useState('')
   const [frontFile, setFrontFile] = useState(null)
   const [backFile, setBackFile] = useState(null)
   const [cameraMode, setCameraMode] = useState(false)
@@ -157,6 +158,12 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     formData.append('vendor_scenario', scenario)
     formData.append('front_image', front)
     formData.append('back_image', back)
+    if (scenario === 'AMOUNT_MISMATCH' && ocrAmountDollars) {
+      const ocrCents = Math.round(parseFloat(ocrAmountDollars) * 100)
+      if (!isNaN(ocrCents) && ocrCents > 0) {
+        formData.append('simulated_ocr_amount_cents', String(ocrCents))
+      }
+    }
 
     setLoading(true)
     try {
@@ -284,13 +291,35 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
         </p>
         <select
           value={scenario}
-          onChange={e => setScenario(e.target.value)}
+          onChange={e => { setScenario(e.target.value); setOcrAmountDollars('') }}
           className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
         >
           {SCENARIOS.map(s => (
             <option key={s.code} value={s.code}>{s.label} — {s.description}</option>
           ))}
         </select>
+        {scenario === 'AMOUNT_MISMATCH' && (
+          <div className="mt-3 pt-3 border-t border-amber-200">
+            <label className="block text-xs font-semibold text-amber-800 mb-1">
+              Simulated OCR Amount ($) <span className="font-normal text-amber-700">— what the stub will "read" from the check</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder={`e.g. ${amountDollars ? (parseFloat(amountDollars) * 0.8).toFixed(2) : '80.00'} (leave blank for auto 80% of entered)`}
+              value={ocrAmountDollars}
+              onChange={e => setOcrAmountDollars(e.target.value)}
+              className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+            {ocrAmountDollars && amountDollars && parseFloat(ocrAmountDollars) === parseFloat(amountDollars) && (
+              <p className="mt-1 text-xs text-amber-700">⚠ OCR amount matches entered amount — no mismatch will be created. Enter a different value.</p>
+            )}
+            <p className="mt-1 text-xs text-amber-600">
+              The operator will see this as the OCR-recognized amount vs. {amountDollars ? `$${parseFloat(amountDollars).toFixed(2)}` : 'the entered amount'} investor-entered.
+            </p>
+          </div>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
