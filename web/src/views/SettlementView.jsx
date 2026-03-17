@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api.js'
 
 const ACCENT = '#059669'
@@ -106,12 +106,175 @@ function BatchesTab({ onSelectBatch }) {
   )
 }
 
+function ReturnModal({ deposit, reasons, onClose, onSuccess }) {
+  const [selectedCode, setSelectedCode] = useState(reasons[0]?.code || '')
+  const [notes, setNotes] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+  const overlayRef = useRef(null)
+
+  const selectedReason = reasons.find(r => r.code === selectedCode)
+
+  async function handleConfirm() {
+    setLoading(true)
+    setError(null)
+    try {
+      const resp = await api.returnDeposit(deposit.transfer_id || deposit.id, {
+        reason_code: selectedCode,
+        notes,
+      })
+      setResult(resp.data)
+      onSuccess()
+    } catch (err) {
+      setError(err?.error || 'Return failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div
+      ref={overlayRef}
+      onClick={e => { if (e.target === overlayRef.current) onClose() }}
+      style={{
+        position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+      }}
+    >
+      <div style={{
+        background: '#fff', borderRadius: 10, padding: 24, width: 480, maxWidth: '95vw',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16,
+      }}>
+        {result ? (
+          <>
+            <h3 style={{ margin: 0, fontSize: 16, color: '#dc2626' }}>✓ Check Returned</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+              <p style={{ margin: 0 }}><strong>Reason:</strong> {result.return_reason?.label}</p>
+              <p style={{ margin: 0 }}><strong>Bank Reference:</strong> <code>{result.bank_reference}</code></p>
+              <p style={{ margin: 0, color: '#dc2626' }}>
+                <strong>Reversal:</strong> −{fmtCents(result.reversal?.original_amount_cents)}
+              </p>
+              <p style={{ margin: 0, color: '#dc2626' }}>
+                <strong>Return Fee:</strong> −{fmtCents(result.reversal?.fee_cents)}
+              </p>
+              <p style={{ margin: 0, fontWeight: 600 }}>
+                <strong>Total Debited:</strong> −{fmtCents(result.reversal?.total_debited_cents)}
+              </p>
+              <p style={{ margin: 0, color: '#6b7280' }}>
+                Investor Notified: {result.investor_notified ? 'Yes' : 'No'}
+              </p>
+            </div>
+            <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>
+              Switch to the Investor View to see the return notification and updated ledger.
+            </p>
+            <button
+              onClick={onClose}
+              style={{ alignSelf: 'flex-end', padding: '7px 16px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', fontSize: 13, cursor: 'pointer' }}
+            >
+              Close
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>↩ Simulate Bank Return</h3>
+              <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#9ca3af' }}>✕</button>
+            </div>
+
+            {/* Deposit summary */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 6, padding: 10, fontSize: 12 }}>
+              <p style={{ margin: '0 0 2px', color: '#6b7280' }}>Transfer</p>
+              <p style={{ margin: '0 0 4px', fontFamily: 'monospace', fontSize: 11 }}>{deposit.transfer_id || deposit.id}</p>
+              <p style={{ margin: 0 }}>
+                <strong>{fmtCents(deposit.amount_cents)}</strong> · {deposit.account_id}
+              </p>
+            </div>
+
+            {/* Return reason */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Return Reason</label>
+              <select
+                value={selectedCode}
+                onChange={e => setSelectedCode(e.target.value)}
+                style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '7px 10px', fontSize: 13 }}
+              >
+                {reasons.map(r => (
+                  <option key={r.code} value={r.code}>{r.label}</option>
+                ))}
+              </select>
+              {selectedReason && (
+                <p style={{ margin: 0, fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>
+                  {selectedReason.description}
+                </p>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Notes (optional)</label>
+              <input
+                type="text"
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Internal notes about this return"
+                style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '7px 10px', fontSize: 13 }}
+              />
+            </div>
+
+            {/* Impact preview */}
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: 10, fontSize: 12 }}>
+              <p style={{ margin: '0 0 6px', fontWeight: 600, color: '#dc2626' }}>This will:</p>
+              <ul style={{ margin: 0, paddingLeft: 16, color: '#374151', lineHeight: 1.7 }}>
+                <li>Debit {fmtCents(deposit.amount_cents)} from {deposit.account_id} (reversal)</li>
+                <li>Debit $30.00 from {deposit.account_id} (return fee)</li>
+                <li>Transition deposit from Completed → Returned</li>
+                <li>Notify the investor</li>
+              </ul>
+            </div>
+
+            {error && <p style={{ margin: 0, color: '#dc2626', fontSize: 13 }}>{error}</p>}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={onClose}
+                style={{ padding: '7px 16px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', fontSize: 13, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                disabled={loading}
+                style={{
+                  padding: '7px 16px', borderRadius: 6, border: 'none',
+                  backgroundColor: '#dc2626', color: 'white', fontSize: 13, fontWeight: 600,
+                  cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1,
+                }}
+              >
+                {loading ? 'Processing…' : 'Confirm Return'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function BatchDetailTab({ batchId, onBack }) {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [returnModal, setReturnModal] = useState(null)
+  const [returnReasons, setReturnReasons] = useState([])
 
   useEffect(() => {
+    api.getReturnReasons()
+      .then(reasons => setReturnReasons(Array.isArray(reasons) ? reasons : []))
+      .catch(() => {})
+  }, [])
+
+  const fetchDetail = useCallback(() => {
     if (!batchId) return
     setLoading(true)
     api.getBatch(batchId)
@@ -119,6 +282,10 @@ function BatchDetailTab({ batchId, onBack }) {
       .catch(err => setError(err?.error || 'Failed to load batch'))
       .finally(() => setLoading(false))
   }, [batchId])
+
+  useEffect(() => {
+    fetchDetail()
+  }, [fetchDetail])
 
   if (!batchId) return (
     <p style={{ color: '#6b7280', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>
@@ -133,6 +300,15 @@ function BatchDetailTab({ batchId, onBack }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {returnModal && returnReasons.length > 0 && (
+        <ReturnModal
+          deposit={returnModal}
+          reasons={returnReasons}
+          onClose={() => setReturnModal(null)}
+          onSuccess={() => { fetchDetail() }}
+        />
+      )}
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={{ fontSize: 13, color: ACCENT, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>← Back to list</button>
         <StatusBadge status={b.status} />
@@ -166,7 +342,7 @@ function BatchDetailTab({ batchId, onBack }) {
             <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                  {['Transfer ID', 'Account', 'Amount', 'Status', 'Created'].map(h => (
+                  {['Transfer ID', 'Account', 'Amount', 'Status', 'Created', 'Actions'].map(h => (
                     <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 11, color: '#6b7280', textTransform: 'uppercase' }}>{h}</th>
                   ))}
                 </tr>
@@ -179,6 +355,20 @@ function BatchDetailTab({ batchId, onBack }) {
                     <td style={{ padding: '6px 10px', fontWeight: 500 }}>{fmtCents(t.amount_cents)}</td>
                     <td style={{ padding: '6px 10px' }}>{t.status}</td>
                     <td style={{ padding: '6px 10px', color: '#6b7280' }}>{fmtDate(t.created_at)}</td>
+                    <td style={{ padding: '6px 10px' }}>
+                      {t.status === 'completed' && (
+                        <button
+                          onClick={() => setReturnModal(t)}
+                          style={{
+                            fontSize: 12, padding: '3px 10px',
+                            backgroundColor: '#fef2f2', color: '#dc2626',
+                            border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer',
+                          }}
+                        >
+                          ↩ Simulate Return
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

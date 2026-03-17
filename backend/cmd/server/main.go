@@ -196,6 +196,8 @@ func main() {
 		})
 	})
 
+	// Public endpoints — no auth required
+	r.GET("/api/v1/returns/reasons", depositHandler.GetReturnReasons)
 	// Image serving — no auth required (UUIDs are not guessable; browser <img> tags can't send headers)
 	r.GET("/api/v1/deposits/:id/images/:side", depositHandler.ServeImage)
 

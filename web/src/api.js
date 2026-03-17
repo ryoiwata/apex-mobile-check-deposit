@@ -86,6 +86,9 @@ export const api = {
       body: JSON.stringify({ contribution_type: contributionType }),
     }).then(handleResponse),
 
+  getReturnReasons: () =>
+    fetch('/api/v1/returns/reasons').then(handleResponse),
+
   returnDeposit: (id, body) =>
     fetch(`/api/v1/operator/deposits/${id}/return`, {
       method: 'POST',

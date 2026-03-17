@@ -358,11 +358,25 @@ function ActionsTab() {
   const [settlementResult, setSettlementResult] = useState(null)
   const [settlementError, setSettlementError] = useState(null)
 
+  const [returnReasons, setReturnReasons] = useState([])
   const [returnId, setReturnId] = useState('')
-  const [returnReason, setReturnReason] = useState('insufficient_funds')
+  const [selectedReasonCode, setSelectedReasonCode] = useState('')
+  const [returnNotes, setReturnNotes] = useState('')
   const [returning, setReturning] = useState(false)
   const [returnResult, setReturnResult] = useState(null)
   const [returnError, setReturnError] = useState(null)
+
+  useEffect(() => {
+    api.getReturnReasons()
+      .then(reasons => {
+        const list = Array.isArray(reasons) ? reasons : []
+        setReturnReasons(list)
+        if (list.length > 0) setSelectedReasonCode(list[0].code)
+      })
+      .catch(() => {})
+  }, [])
+
+  const selectedReason = returnReasons.find(r => r.code === selectedReasonCode)
 
   async function handleTriggerSettlement(e) {
     e.preventDefault()
@@ -381,12 +395,15 @@ function ActionsTab() {
 
   async function handleReturn(e) {
     e.preventDefault()
-    if (!returnId.trim() || !returnReason.trim()) return
+    if (!returnId.trim() || !selectedReasonCode) return
     setReturning(true)
     setReturnResult(null)
     setReturnError(null)
     try {
-      const resp = await api.returnDeposit(returnId.trim(), { return_reason: returnReason })
+      const resp = await api.returnDeposit(returnId.trim(), {
+        reason_code: selectedReasonCode,
+        notes: returnNotes,
+      })
       setReturnResult(resp.data)
     } catch (err) {
       setReturnError(err?.error || 'Return failed — transfer must be in Completed state')
@@ -433,54 +450,111 @@ function ActionsTab() {
         {settlementError && <p style={{ color: '#dc2626', fontSize: 13, marginTop: 8 }}>{settlementError}</p>}
       </div>
 
-      {/* Simulate return */}
+      {/* Simulate bank return */}
       <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16 }}>
-        <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Simulate Check Return</h4>
-        <form onSubmit={handleReturn} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input
-            type="text"
-            value={returnId}
-            onChange={e => setReturnId(e.target.value)}
-            placeholder="Transfer ID (must be in Completed state)"
-            style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '6px 10px', fontSize: 13, fontFamily: 'monospace' }}
-          />
-          <select
-            value={returnReason}
-            onChange={e => setReturnReason(e.target.value)}
-            style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '6px 10px', fontSize: 13 }}
-          >
-            <option value="insufficient_funds">insufficient_funds</option>
-            <option value="account_closed">account_closed</option>
-            <option value="stop_payment">stop_payment</option>
-            <option value="altered_check">altered_check</option>
-            <option value="endorsement_missing">endorsement_missing</option>
-          </select>
-          <div>
+        <h4 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600 }}>↩ Simulate Bank Return</h4>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6b7280' }}>
+          Trigger a check return for any deposit in Completed state. This posts reversal ledger entries and notifies the investor.
+        </p>
+
+        {returnResult ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: 12 }}>
+              <p style={{ margin: '0 0 6px', fontWeight: 700, fontSize: 13, color: '#dc2626' }}>✓ Check Returned</p>
+              <div style={{ fontSize: 13, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <p style={{ margin: 0 }}><strong>Reason:</strong> {returnResult.return_reason?.label}</p>
+                <p style={{ margin: 0 }}><strong>Bank Ref:</strong> <code style={{ fontSize: 12 }}>{returnResult.bank_reference}</code></p>
+                <p style={{ margin: 0 }}>
+                  Reversal: −${((returnResult.reversal?.original_amount_cents || 0) / 100).toFixed(2)} &nbsp;·&nbsp;
+                  Fee: −${((returnResult.reversal?.fee_cents || 0) / 100).toFixed(2)} &nbsp;·&nbsp;
+                  <strong>Total: −${((returnResult.reversal?.total_debited_cents || 0) / 100).toFixed(2)}</strong>
+                </p>
+                <p style={{ margin: 0, color: '#6b7280', fontSize: 12 }}>
+                  Investor Notified: {returnResult.investor_notified ? 'Yes' : 'No'}
+                </p>
+              </div>
+            </div>
+            <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>
+              Switch to Investor View to see the return notification and updated ledger.
+            </p>
             <button
-              type="submit"
-              disabled={returning || !returnId.trim()}
-              style={{
-                backgroundColor: '#dc2626',
-                color: 'white',
-                border: 'none',
-                borderRadius: 6,
-                padding: '8px 14px',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: returning ? 'not-allowed' : 'pointer',
-                opacity: returning ? 0.6 : 1,
-              }}
+              onClick={() => { setReturnResult(null); setReturnId(''); setReturnNotes('') }}
+              style={{ alignSelf: 'flex-start', fontSize: 12, color: ACCENT, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             >
-              {returning ? 'Processing…' : 'Simulate Return'}
+              Return another deposit
             </button>
           </div>
-        </form>
-        {returnResult && (
-          <pre style={{ marginTop: 12, background: '#f8fafc', padding: 10, borderRadius: 4, fontSize: 12, overflow: 'auto' }}>
-            {JSON.stringify(returnResult, null, 2)}
-          </pre>
+        ) : (
+          <form onSubmit={handleReturn} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input
+              type="text"
+              value={returnId}
+              onChange={e => setReturnId(e.target.value)}
+              placeholder="Transfer ID (must be in Completed state)"
+              style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '7px 10px', fontSize: 13, fontFamily: 'monospace' }}
+            />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <select
+                value={selectedReasonCode}
+                onChange={e => setSelectedReasonCode(e.target.value)}
+                style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '7px 10px', fontSize: 13 }}
+              >
+                {returnReasons.map(r => (
+                  <option key={r.code} value={r.code}>{r.label}</option>
+                ))}
+              </select>
+              {selectedReason && (
+                <p style={{ margin: 0, fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>
+                  {selectedReason.description}
+                </p>
+              )}
+            </div>
+
+            <input
+              type="text"
+              value={returnNotes}
+              onChange={e => setReturnNotes(e.target.value)}
+              placeholder="Notes (optional)"
+              style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '7px 10px', fontSize: 13 }}
+            />
+
+            {/* Impact preview — only shown when a transfer ID is entered */}
+            {returnId.trim() && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: 10, fontSize: 12 }}>
+                <p style={{ margin: '0 0 4px', fontWeight: 600, color: '#dc2626' }}>This will:</p>
+                <ul style={{ margin: 0, paddingLeft: 16, color: '#374151', lineHeight: 1.7 }}>
+                  <li>Debit the original deposit amount from the investor account (reversal)</li>
+                  <li>Debit $30.00 from the investor account (return fee)</li>
+                  <li>Transition deposit from Completed → Returned</li>
+                  <li>Notify the investor</li>
+                </ul>
+              </div>
+            )}
+
+            {returnError && <p style={{ margin: 0, color: '#dc2626', fontSize: 13 }}>{returnError}</p>}
+
+            <div>
+              <button
+                type="submit"
+                disabled={returning || !returnId.trim() || !selectedReasonCode}
+                style={{
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '8px 16px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: (returning || !returnId.trim()) ? 'not-allowed' : 'pointer',
+                  opacity: (returning || !returnId.trim()) ? 0.6 : 1,
+                }}
+              >
+                {returning ? 'Processing…' : 'Trigger Return'}
+              </button>
+            </div>
+          </form>
         )}
-        {returnError && <p style={{ color: '#dc2626', fontSize: 13, marginTop: 8 }}>{returnError}</p>}
       </div>
     </div>
   )

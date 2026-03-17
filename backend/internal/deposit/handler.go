@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/models"
@@ -332,8 +333,17 @@ func (h *Handler) GetTrace(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": trace})
 }
 
+// GetReturnReasons handles GET /api/v1/returns/reasons.
+// Returns the canonical list of supported check return reason codes.
+func (h *Handler) GetReturnReasons(c *gin.Context) {
+	c.JSON(http.StatusOK, models.ReturnReasons)
+}
+
 // Return handles POST /api/v1/operator/deposits/:id/return.
-// Body: { "return_reason": "insufficient_funds", "bank_reference": "RET-001" }
+//
+// Body: { "reason_code": "insufficient_funds", "bank_reference": "RET-001", "notes": "..." }
+// The "return_reason" field is also accepted for backward compatibility with existing scripts.
+// If bank_reference is omitted, one is auto-generated.
 func (h *Handler) Return(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -345,8 +355,11 @@ func (h *Handler) Return(c *gin.Context) {
 	}
 
 	var body struct {
-		ReturnReason  string `json:"return_reason"`
+		ReasonCode    string `json:"reason_code"`
 		BankReference string `json:"bank_reference"`
+		Notes         string `json:"notes"`
+		// backward-compat: accept old "return_reason" field from existing scripts
+		ReturnReason string `json:"return_reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -356,15 +369,46 @@ func (h *Handler) Return(c *gin.Context) {
 		return
 	}
 
-	if body.ReturnReason == "" {
+	// Prefer reason_code; fall back to return_reason for backward compatibility.
+	reasonCode := body.ReasonCode
+	if reasonCode == "" {
+		reasonCode = body.ReturnReason
+	}
+	if reasonCode == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "return_reason is required",
+			"error": "reason_code is required",
 			"code":  "INVALID_INPUT",
 		})
 		return
 	}
 
-	transfer, err := h.svc.ProcessReturn(c.Request.Context(), id, body.ReturnReason, h.cfg.ReturnFeeCents)
+	// Validate the reason code against the known list.
+	// Only reject unknown codes when reason_code (not the legacy return_reason) was provided.
+	returnReason := models.ValidReturnReasonCode(reasonCode)
+	if returnReason == nil {
+		if body.ReasonCode != "" {
+			validCodes := make([]string, len(models.ReturnReasons))
+			for i, r := range models.ReturnReasons {
+				validCodes[i] = r.Code
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":       fmt.Sprintf("unknown reason_code: %q", reasonCode),
+				"code":        "INVALID_INPUT",
+				"valid_codes": validCodes,
+			})
+			return
+		}
+		// Legacy return_reason free-text: wrap in a synthetic reason object.
+		returnReason = &models.ReturnReason{Code: reasonCode, Label: reasonCode, Description: ""}
+	}
+
+	// Auto-generate a bank reference if none was provided.
+	bankRef := body.BankReference
+	if bankRef == "" {
+		bankRef = fmt.Sprintf("RET-%s-%s", time.Now().UTC().Format("20060102"), uuid.New().String()[:8])
+	}
+
+	transfer, err := h.svc.ProcessReturn(c.Request.Context(), id, reasonCode, h.cfg.ReturnFeeCents)
 	if err != nil {
 		if errors.Is(err, models.ErrTransferNotReturnable) {
 			c.JSON(http.StatusConflict, gin.H{
@@ -388,13 +432,16 @@ func (h *Handler) Return(c *gin.Context) {
 	}
 
 	// Best-effort notification — do not fail the request if this errors.
+	investorNotified := false
 	meta, _ := json.Marshal(map[string]any{
-		"amount_cents": transfer.AmountCents,
-		"fee_cents":    h.cfg.ReturnFeeCents,
-		"reason":       body.ReturnReason,
-		"can_resubmit": true,
+		"amount_cents":   transfer.AmountCents,
+		"fee_cents":      h.cfg.ReturnFeeCents,
+		"reason_code":    returnReason.Code,
+		"reason_label":   returnReason.Label,
+		"bank_reference": bankRef,
+		"can_resubmit":   true,
 	})
-	_ = h.notifRepo.Create(c.Request.Context(), &notification.Notification{
+	if notifErr := h.notifRepo.Create(c.Request.Context(), &notification.Notification{
 		AccountID:  transfer.AccountID,
 		TransferID: transfer.ID.String(),
 		Type:       "returned",
@@ -402,25 +449,28 @@ func (h *Handler) Return(c *gin.Context) {
 		Message: fmt.Sprintf(
 			"Your check deposit of %s was returned by the bank. Reason: %s. A %s return fee has been deducted from your account. You may submit a new deposit with a different check.",
 			notification.FormatCents(transfer.AmountCents),
-			body.ReturnReason,
+			returnReason.Label,
 			notification.FormatCents(h.cfg.ReturnFeeCents),
 		),
 		Metadata: meta,
-	})
+	}); notifErr == nil {
+		investorNotified = true
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"transfer_id":           transfer.ID,
-			"status":                transfer.Status,
-			"return_reason":         body.ReturnReason,
-			"original_amount_cents": transfer.AmountCents,
-			"fee_cents":             h.cfg.ReturnFeeCents,
-			"total_debit_cents":     transfer.AmountCents + h.cfg.ReturnFeeCents,
-			"message": fmt.Sprintf(
-				"Your check deposit was returned by the bank. A $%.2f return fee has been deducted from your account.",
-				float64(h.cfg.ReturnFeeCents)/100,
-			),
-			"action": "new_deposit",
+			"transfer_id":  transfer.ID,
+			"status":       transfer.Status,
+			"amount_cents": transfer.AmountCents,
+			"return_reason": returnReason,
+			"bank_reference": bankRef,
+			"reversal": gin.H{
+				"original_amount_cents": transfer.AmountCents,
+				"fee_cents":             h.cfg.ReturnFeeCents,
+				"total_debited_cents":   transfer.AmountCents + h.cfg.ReturnFeeCents,
+			},
+			"ledger_entries_created": 2,
+			"investor_notified":      investorNotified,
 		},
 	})
 }

@@ -103,14 +103,19 @@ echo "Step 3: POST /operator/deposits/$TRANSFER_ID/return"
 RETURN_RESP=$(curl -s -X POST "$BASE/api/v1/operator/deposits/$TRANSFER_ID/return" \
     -H "X-Operator-ID: $OP" \
     -H "Content-Type: application/json" \
-    -d '{"return_reason":"insufficient_funds","bank_reference":"RET-DEMO-001"}')
+    -d '{"reason_code":"insufficient_funds","bank_reference":"RET-DEMO-001"}')
 
 RETURN_STATUS=$(echo "$RETURN_RESP" | jq -r '.data.status')
 RETURN_AMOUNT=$(echo "$RETURN_RESP" | jq -r '.data.amount_cents')
+RETURN_REASON_CODE=$(echo "$RETURN_RESP" | jq -r '.data.return_reason.code')
+BANK_REF=$(echo "$RETURN_RESP" | jq -r '.data.bank_reference')
 echo "  Return status   : $RETURN_STATUS"
 echo "  Transfer amount : $RETURN_AMOUNT"
+echo "  Return reason   : $RETURN_REASON_CODE"
+echo "  Bank reference  : $BANK_REF"
 assert_eq "transfer moves to returned" "$RETURN_STATUS" "returned"
 assert_eq "amount_cents on returned transfer matches deposit" "$RETURN_AMOUNT" "$AMOUNT"
+assert_eq "return reason code matches request" "$RETURN_REASON_CODE" "insufficient_funds"
 echo ""
 
 # ── Step 4: Verify ledger entries ────────────────────────────────────────────
