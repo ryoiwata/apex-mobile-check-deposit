@@ -6,7 +6,6 @@ const TIME_SCENARIOS = [
   { value: '',              label: 'Now (actual current time)',                        description: '' },
   { value: 'before_cutoff', label: 'Before cutoff — today 3:00 PM CT',               description: 'Deposit timestamp set to 3:00 PM CT — included in today\'s settlement batch' },
   { value: 'after_cutoff',  label: 'After cutoff — today 7:15 PM CT',                description: 'Deposit timestamp set to 7:15 PM CT — rolls to next business day\'s batch' },
-  { value: 'yesterday',     label: 'Yesterday — 2:00 PM CT',                          description: 'Deposit timestamp set to yesterday 2:00 PM CT — always eligible for today\'s batch' },
 ]
 
 const SCENARIOS = [
