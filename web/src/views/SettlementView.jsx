@@ -380,11 +380,130 @@ function BatchDetailTab({ batchId, onBack }) {
   )
 }
 
+function PreviewDepositTable({ deposits, headerColor, checkmark }) {
+  if (deposits.length === 0) return null
+  return (
+    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', marginTop: 8 }}>
+      <thead>
+        <tr style={{ color: headerColor }}>
+          <th style={{ textAlign: 'left', padding: '3px 6px' }}>Transfer ID</th>
+          <th style={{ textAlign: 'left', padding: '3px 6px' }}>Account</th>
+          <th style={{ textAlign: 'right', padding: '3px 6px' }}>Amount</th>
+          <th style={{ textAlign: 'left', padding: '3px 6px' }}>Submitted</th>
+        </tr>
+      </thead>
+      <tbody>
+        {deposits.map(d => (
+          <tr key={d.transfer_id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <td style={{ padding: '4px 6px', fontFamily: 'monospace', fontSize: 11, color: '#6b7280' }}>
+              {d.transfer_id.slice(0, 8)}…
+            </td>
+            <td style={{ padding: '4px 6px' }}>{d.account_id}</td>
+            <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 500 }}>{fmtCents(d.amount_cents)}</td>
+            <td style={{ padding: '4px 6px', color: '#6b7280' }}>
+              {new Date(d.created_at).toLocaleTimeString()} {checkmark}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function SettlementPreviewModal({ preview, onClose, onConfirm, confirming }) {
+  const overlayRef = useRef(null)
+  const included = preview.included_deposits ?? []
+  const rolled = preview.rolled_deposits ?? []
+
+  return (
+    <div
+      ref={overlayRef}
+      onClick={e => { if (e.target === overlayRef.current) onClose() }}
+      style={{
+        position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+      }}
+    >
+      <div style={{
+        background: '#fff', borderRadius: 10, width: 640, maxWidth: '96vw',
+        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>EOD Settlement Preview</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#9ca3af' }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>
+            Cutoff: <strong>{new Date(preview.cutoff_time).toLocaleString()}</strong> (6:30 PM CT)
+          </p>
+
+          {/* Included */}
+          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontWeight: 600, color: '#065f46', fontSize: 13 }}>
+                ✅ Included in this batch ({included.length})
+              </span>
+              <span style={{ fontWeight: 700, color: '#065f46', fontSize: 13 }}>{fmtCents(preview.included_total)}</span>
+            </div>
+            {included.length === 0
+              ? <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>No deposits before cutoff</p>
+              : <PreviewDepositTable deposits={included} headerColor="#166534" checkmark="✓" />
+            }
+          </div>
+
+          {/* Rolled */}
+          <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontWeight: 600, color: '#9a3412', fontSize: 13 }}>
+                ⏳ Rolled to next business day ({rolled.length})
+              </span>
+              <span style={{ fontWeight: 700, color: '#9a3412', fontSize: 13 }}>{fmtCents(preview.rolled_total)}</span>
+            </div>
+            {rolled.length === 0
+              ? <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>No deposits after cutoff</p>
+              : <PreviewDepositTable deposits={rolled} headerColor="#9a3412" checkmark="✗ after cutoff" />
+            }
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', fontSize: 13, cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={confirming || included.length === 0}
+            style={{
+              padding: '8px 16px', borderRadius: 6, border: 'none',
+              backgroundColor: ACCENT, color: 'white', fontSize: 13, fontWeight: 600,
+              cursor: (confirming || included.length === 0) ? 'not-allowed' : 'pointer',
+              opacity: (confirming || included.length === 0) ? 0.55 : 1,
+            }}
+          >
+            {confirming ? 'Running…' : `Confirm Settlement (${included.length} deposit${included.length !== 1 ? 's' : ''})`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EODStatusTab() {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [settling, setSettling] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [confirming, setConfirming] = useState(false)
   const [settlementResult, setSettlementResult] = useState(null)
   const [settlementError, setSettlementError] = useState(null)
 
@@ -406,20 +525,34 @@ function EODStatusTab() {
     return () => clearInterval(timer)
   }, [fetchStatus])
 
-  async function handleTrigger() {
-    const today = new Date().toISOString().slice(0, 10)
-    if (!window.confirm(`Trigger EOD settlement for ${today}?`)) return
-    setSettling(true)
+  async function handleTriggerClick() {
+    setPreviewLoading(true)
     setSettlementResult(null)
     setSettlementError(null)
     try {
+      const resp = await api.getSettlementPreview()
+      setPreview(resp.data)
+      setShowPreview(true)
+    } catch (err) {
+      setSettlementError(err?.error || 'Failed to load settlement preview')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmSettlement() {
+    const today = new Date().toISOString().slice(0, 10)
+    setConfirming(true)
+    try {
       const resp = await api.triggerSettlement(today)
       setSettlementResult(resp.data)
+      setShowPreview(false)
       fetchStatus()
     } catch (err) {
       setSettlementError(err?.error || 'Settlement trigger failed')
+      setShowPreview(false)
     } finally {
-      setSettling(false)
+      setConfirming(false)
     }
   }
 
@@ -430,6 +563,15 @@ function EODStatusTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {showPreview && preview && (
+        <SettlementPreviewModal
+          preview={preview}
+          onClose={() => setShowPreview(false)}
+          onConfirm={handleConfirmSettlement}
+          confirming={confirming}
+        />
+      )}
+
       {/* Cutoff status card */}
       <div style={{
         background: status?.past_cutoff ? '#fef2f2' : '#f0fdf4',
@@ -458,8 +600,8 @@ function EODStatusTab() {
       {/* Trigger button */}
       <div>
         <button
-          onClick={handleTrigger}
-          disabled={settling}
+          onClick={handleTriggerClick}
+          disabled={previewLoading || confirming}
           style={{
             backgroundColor: ACCENT,
             color: 'white',
@@ -468,11 +610,11 @@ function EODStatusTab() {
             padding: '10px 20px',
             fontSize: 14,
             fontWeight: 600,
-            cursor: settling ? 'not-allowed' : 'pointer',
-            opacity: settling ? 0.6 : 1,
+            cursor: (previewLoading || confirming) ? 'not-allowed' : 'pointer',
+            opacity: (previewLoading || confirming) ? 0.6 : 1,
           }}
         >
-          {settling ? 'Running Settlement…' : 'Trigger EOD Settlement'}
+          {previewLoading ? 'Loading preview…' : 'Trigger EOD Settlement'}
         </button>
       </div>
 

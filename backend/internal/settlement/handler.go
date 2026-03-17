@@ -115,6 +115,21 @@ func (h *Handler) GetBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": detail})
 }
 
+// GetPreview returns a preview of which FundsPosted deposits will be included
+// in the next settlement batch vs. rolled to the next business day.
+// GET /api/v1/settlement/preview
+func (h *Handler) GetPreview(c *gin.Context) {
+	preview, err := h.svc.GetSettlementPreview(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get settlement preview: " + err.Error(),
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": preview})
+}
+
 // GetEODStatus returns the current EOD cutoff status and pending deposit count.
 // GET /api/v1/settlement/eod-status
 func (h *Handler) GetEODStatus(c *gin.Context) {

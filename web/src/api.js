@@ -119,6 +119,11 @@ export const api = {
       headers: operatorHeaders(),
     }).then(handleResponse),
 
+  getSettlementPreview: () =>
+    fetch('/api/v1/settlement/preview', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
   // Admin endpoints
   getDepositTrace: (transferId) =>
     fetch(`/api/v1/admin/deposits/${transferId}/trace`, {

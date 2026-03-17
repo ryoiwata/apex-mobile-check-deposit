@@ -239,6 +239,7 @@ func main() {
 		settle.GET("/batches", settlementHandler.ListBatches)
 		settle.GET("/batches/:id", settlementHandler.GetBatch)
 		settle.GET("/eod-status", settlementHandler.GetEODStatus)
+		settle.GET("/preview", settlementHandler.GetPreview)
 	}
 
 	// Admin endpoints (operator auth)

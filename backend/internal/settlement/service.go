@@ -494,6 +494,66 @@ func (s *Service) GetBatchWithDeposits(ctx context.Context, batchID uuid.UUID) (
 	return &BatchDetail{Batch: batch, Deposits: deposits}, nil
 }
 
+// SettlementPreview describes which FundsPosted deposits will be included in the
+// next settlement batch vs. rolled to the next business day.
+type SettlementPreview struct {
+	CutoffTime       time.Time        `json:"cutoff_time"`
+	IncludedDeposits []DepositSummary `json:"included_deposits"`
+	RolledDeposits   []DepositSummary `json:"rolled_deposits"`
+	IncludedTotal    int64            `json:"included_total"`
+	RolledTotal      int64            `json:"rolled_total"`
+}
+
+// DepositSummary is a lightweight transfer view used in preview responses.
+type DepositSummary struct {
+	TransferID     string    `json:"transfer_id"`
+	AccountID      string    `json:"account_id"`
+	AmountCents    int64     `json:"amount_cents"`
+	CreatedAt      time.Time `json:"created_at"`
+	IsBeforeCutoff bool      `json:"is_before_cutoff"`
+}
+
+// GetSettlementPreview returns all FundsPosted deposits (not yet batched) categorized
+// by whether they fall before or after today's 6:30 PM CT cutoff.
+func (s *Service) GetSettlementPreview(ctx context.Context) (*SettlementPreview, error) {
+	cutoff := CutoffTime(time.Now().UTC())
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, account_id, amount_cents, created_at
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL
+		ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying preview deposits: %w", err)
+	}
+	defer rows.Close()
+
+	preview := &SettlementPreview{
+		CutoffTime:       cutoff,
+		IncludedDeposits: []DepositSummary{},
+		RolledDeposits:   []DepositSummary{},
+	}
+
+	for rows.Next() {
+		var id uuid.UUID
+		var d DepositSummary
+		if err := rows.Scan(&id, &d.AccountID, &d.AmountCents, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("settlement: scanning preview row: %w", err)
+		}
+		d.TransferID = id.String()
+		d.IsBeforeCutoff = !d.CreatedAt.After(cutoff)
+
+		if d.IsBeforeCutoff {
+			preview.IncludedDeposits = append(preview.IncludedDeposits, d)
+			preview.IncludedTotal += d.AmountCents
+		} else {
+			preview.RolledDeposits = append(preview.RolledDeposits, d)
+			preview.RolledTotal += d.AmountCents
+		}
+	}
+	return preview, rows.Err()
+}
+
 // GetEODStatus returns the current cutoff state and count of deposits awaiting settlement.
 func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
 	now := time.Now().UTC()
