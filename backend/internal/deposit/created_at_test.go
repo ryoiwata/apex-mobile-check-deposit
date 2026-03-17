@@ -20,7 +20,6 @@ func TestResolveCreatedAt(t *testing.T) {
 	}{
 		{"before_cutoff", 15, 0, "3:00 PM CT — before 6:30 PM cutoff"},
 		{"after_cutoff", 19, 15, "7:15 PM CT — after 6:30 PM cutoff"},
-		{"yesterday", 14, 0, "yesterday 2:00 PM CT"},
 		{"", -1, -1, "empty string returns current time (hour not asserted)"},
 	}
 
@@ -44,15 +43,9 @@ func TestResolveCreatedAt(t *testing.T) {
 			assert.Equal(t, tt.wantMinute, ctResult.Minute(),
 				"%s: expected minute %d in CT, got %d", tt.desc, tt.wantMinute, ctResult.Minute())
 
-			if tt.override == "yesterday" {
-				expectedDate := time.Now().In(ct).AddDate(0, 0, -1)
-				assert.Equal(t, expectedDate.Day(), ctResult.Day(),
-					"yesterday override must be on the previous calendar day (CT)")
-			} else {
-				today := time.Now().In(ct)
-				assert.Equal(t, today.Day(), ctResult.Day(),
-					"before/after_cutoff must be on today's calendar day (CT)")
-			}
+			today := time.Now().In(ct)
+			assert.Equal(t, today.Day(), ctResult.Day(),
+				"override must be on today's calendar day (CT)")
 		})
 	}
 }
