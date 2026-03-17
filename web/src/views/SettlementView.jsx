@@ -507,6 +507,15 @@ export default function SettlementView() {
     setActiveTab('detail')
   }
 
+  function handleTabClick(tabId) {
+    // Clicking Batch Detail without a batch selected redirects to Batches
+    if (tabId === 'detail' && !selectedBatchId) {
+      setActiveTab('batches')
+    } else {
+      setActiveTab(tabId)
+    }
+  }
+
   return (
     <div>
       <div style={{ padding: '12px 0 8px', marginBottom: 8 }}>
@@ -519,7 +528,7 @@ export default function SettlementView() {
         {TABS.map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
             style={{
               padding: '8px 20px',
               fontSize: 13,
@@ -531,7 +540,7 @@ export default function SettlementView() {
               cursor: 'pointer',
             }}
           >
-            {tab.label}
+            {tab.label}{tab.id === 'detail' && selectedBatchId ? ` (${selectedBatchId.slice(0, 8)}…)` : ''}
           </button>
         ))}
       </nav>

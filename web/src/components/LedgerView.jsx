@@ -2,14 +2,14 @@ import { useState, useCallback } from 'react'
 import { api } from '../api.js'
 
 const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — Clean Pass' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — IQA Blur' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — IQA Glare' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — MICR Failure' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — Duplicate' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — Amount Mismatch' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — Basic Pass' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — Retirement' },
+  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage' },
+  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage' },
+  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account' },
+  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA' },
 ]
 
 function fmtCents(cents) {

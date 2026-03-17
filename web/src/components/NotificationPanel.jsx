@@ -23,7 +23,7 @@ function formatTimeAgo(isoString) {
  * NotificationPanel shows investor notifications for a given account.
  * @param {{ accountId: string, onSelectTransfer: (transferId: string) => void, onUnreadChange: (count: number) => void }} props
  */
-export default function NotificationPanel({ accountId, onSelectTransfer, onUnreadChange }) {
+export default function NotificationPanel({ accountId, onSelectTransfer, onUnreadChange, onStartNewDeposit }) {
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -74,7 +74,7 @@ export default function NotificationPanel({ accountId, onSelectTransfer, onUnrea
     }
   }
 
-  if (!accountId || notifications.length === 0) return null
+  if (!accountId) return null
 
   return (
     <div style={{ marginBottom: 24 }}>
@@ -113,7 +113,15 @@ export default function NotificationPanel({ accountId, onSelectTransfer, onUnrea
         )}
       </div>
 
-      {notifications.map(notif => (
+      {notifications.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '28px 0', color: '#9ca3af' }}>
+          <p style={{ fontSize: 22, margin: '0 0 6px' }}>🔔</p>
+          <p style={{ margin: '0 0 4px', fontSize: 14 }}>No notifications yet.</p>
+          <p style={{ margin: 0, fontSize: 12 }}>
+            You'll see updates here when deposits are approved, rejected, or returned.
+          </p>
+        </div>
+      ) : notifications.map(notif => (
         <div
           key={notif.id}
           onClick={() => handleClick(notif)}
@@ -145,9 +153,30 @@ export default function NotificationPanel({ accountId, onSelectTransfer, onUnrea
               {formatTimeAgo(notif.created_at)}
             </span>
           </div>
-          <p style={{ fontSize: 12, color: '#374151', margin: 0, lineHeight: 1.4 }}>
+          <p style={{ fontSize: 12, color: '#374151', margin: '0 0 8px', lineHeight: 1.4 }}>
             {notif.message}
           </p>
+          {onStartNewDeposit && (notif.type === 'returned' || notif.type === 'rejected') && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const acctId = notif.metadata?.account_id || accountId
+                onStartNewDeposit(acctId)
+              }}
+              style={{
+                fontSize: 12,
+                padding: '5px 12px',
+                backgroundColor: '#2563eb',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {notif.type === 'returned' ? 'Start New Deposit →' : 'Submit New Deposit →'}
+            </button>
+          )}
         </div>
       ))}
     </div>
