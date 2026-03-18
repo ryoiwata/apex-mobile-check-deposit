@@ -238,6 +238,8 @@ func main() {
 	{
 		settle.GET("/batches", settlementHandler.ListBatches)
 		settle.GET("/batches/:id", settlementHandler.GetBatch)
+		settle.GET("/batches/:id/file", settlementHandler.GetFileContents)
+		settle.GET("/batches/:id/download", settlementHandler.DownloadFile)
 		settle.GET("/eod-status", settlementHandler.GetEODStatus)
 		settle.GET("/preview", settlementHandler.GetPreview)
 	}

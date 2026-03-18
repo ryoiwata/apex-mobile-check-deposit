@@ -124,6 +124,30 @@ export const api = {
       headers: operatorHeaders(),
     }).then(handleResponse),
 
+  getSettlementFileContents: (batchId) =>
+    fetch(`/api/v1/settlement/batches/${batchId}/file`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  downloadSettlementFile: async (batchId) => {
+    const resp = await fetch(`/api/v1/settlement/batches/${batchId}/download`, {
+      headers: operatorHeaders(),
+    })
+    if (!resp.ok) {
+      const err = await resp.json()
+      return Promise.reject(err)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `settlement_batch_${batchId}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+
   // Admin endpoints
   getDepositTrace: (transferId) =>
     fetch(`/api/v1/admin/deposits/${transferId}/trace`, {

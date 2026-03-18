@@ -267,6 +267,10 @@ function BatchDetailTab({ batchId, onBack }) {
   const [error, setError] = useState(null)
   const [returnModal, setReturnModal] = useState(null)
   const [returnReasons, setReturnReasons] = useState([])
+  const [fileContents, setFileContents] = useState(null)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState(null)
+  const [showFileContents, setShowFileContents] = useState(false)
 
   useEffect(() => {
     api.getReturnReasons()
@@ -286,6 +290,32 @@ function BatchDetailTab({ batchId, onBack }) {
   useEffect(() => {
     fetchDetail()
   }, [fetchDetail])
+
+  async function handleViewFile() {
+    if (fileContents) {
+      setShowFileContents(v => !v)
+      return
+    }
+    setFileLoading(true)
+    setFileError(null)
+    try {
+      const data = await api.getSettlementFileContents(batchId)
+      setFileContents(data)
+      setShowFileContents(true)
+    } catch (err) {
+      setFileError(err?.error || 'Failed to load file')
+    } finally {
+      setFileLoading(false)
+    }
+  }
+
+  async function handleDownload() {
+    try {
+      await api.downloadSettlementFile(batchId)
+    } catch (err) {
+      setFileError(err?.error || 'Download failed')
+    }
+  }
 
   if (!batchId) return (
     <p style={{ color: '#6b7280', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>
@@ -332,6 +362,63 @@ function BatchDetailTab({ batchId, onBack }) {
           </div>
         ))}
       </div>
+
+      {/* Settlement File Section */}
+      {b.file_path && (
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#374151' }}>Settlement File (X9 JSON)</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: '#6b7280' }}>Path:</span>
+            <code style={{ fontSize: 11, color: '#374151', background: '#f9fafb', padding: '2px 6px', borderRadius: 4, border: '1px solid #e5e7eb', wordBreak: 'break-all' }}>{b.file_path}</code>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={handleViewFile}
+              disabled={fileLoading}
+              style={{
+                padding: '7px 14px', borderRadius: 6, border: '1px solid #d1d5db',
+                background: '#fff', fontSize: 13, cursor: fileLoading ? 'not-allowed' : 'pointer',
+                opacity: fileLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {fileLoading ? '⏳ Loading…' : (showFileContents ? '🙈 Hide Contents' : '👁 View Contents')}
+            </button>
+            <button
+              onClick={handleDownload}
+              style={{
+                padding: '7px 14px', borderRadius: 6, border: 'none',
+                background: ACCENT, color: '#fff', fontSize: 13, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              📥 Download File
+            </button>
+          </div>
+          {fileError && (
+            <p style={{ margin: 0, fontSize: 13, color: '#dc2626' }}>❌ {fileError}</p>
+          )}
+          {showFileContents && fileContents && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: '#6b7280' }}>File contents:</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(JSON.stringify(fileContents, null, 2))}
+                  style={{ fontSize: 12, color: ACCENT, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                >
+                  📋 Copy to clipboard
+                </button>
+              </div>
+              <pre style={{
+                margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0',
+                borderRadius: 6, fontSize: 11, overflowX: 'auto', maxHeight: 400,
+                overflowY: 'auto', lineHeight: 1.5,
+              }}>
+                {JSON.stringify(fileContents, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Deposits in this batch ({b.deposits?.length ?? 0})</h4>
@@ -541,10 +628,9 @@ function EODStatusTab() {
   }
 
   async function handleConfirmSettlement() {
-    const today = new Date().toISOString().slice(0, 10)
     setConfirming(true)
     try {
-      const resp = await api.triggerSettlement(today)
+      const resp = await api.triggerSettlement()
       setSettlementResult(resp.data)
       setShowPreview(false)
       fetchStatus()
@@ -578,8 +664,11 @@ function EODStatusTab() {
         border: `1px solid ${status?.past_cutoff ? '#fecaca' : '#bbf7d0'}`,
         borderRadius: 8,
         padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
             <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 4px' }}>EOD Cutoff (6:30 PM CT)</p>
             <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: status?.past_cutoff ? '#991b1b' : '#065f46' }}>
@@ -590,9 +679,28 @@ function EODStatusTab() {
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 4px' }}>Awaiting Settlement</p>
+            <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 4px' }}>Total Awaiting Settlement</p>
             <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: ACCENT }}>{status?.pending_deposit_count ?? 0}</p>
             <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0 0' }}>{fmtCents(status?.pending_amount_cents)} total</p>
+          </div>
+        </div>
+        {/* Breakdown: in today's batch vs rolled */}
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{
+            flex: 1, background: '#f0fdf4', border: '1px solid #bbf7d0',
+            borderRadius: 6, padding: '8px 12px',
+          }}>
+            <p style={{ fontSize: 11, color: '#6b7280', margin: '0 0 2px' }}>In today's batch (before cutoff)</p>
+            <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#065f46' }}>{status?.in_batch_count ?? 0}</p>
+            <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>{fmtCents(status?.in_batch_amount_cents)}</p>
+          </div>
+          <div style={{
+            flex: 1, background: '#fff7ed', border: '1px solid #fed7aa',
+            borderRadius: 6, padding: '8px 12px',
+          }}>
+            <p style={{ fontSize: 11, color: '#6b7280', margin: '0 0 2px' }}>Rolled to next day (after cutoff)</p>
+            <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#9a3412' }}>{status?.rolled_count ?? 0}</p>
+            <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>{fmtCents(status?.rolled_amount_cents)}</p>
           </div>
         </div>
       </div>

@@ -399,11 +399,15 @@ type BatchDetail struct {
 
 // EODStatus describes the current settlement window.
 type EODStatus struct {
-	CurrentTime         time.Time `json:"current_time"`
-	CutoffTime          time.Time `json:"cutoff_time"`
-	PastCutoff          bool      `json:"past_cutoff"`
-	PendingDepositCount int       `json:"pending_deposit_count"`
-	PendingAmountCents  int64     `json:"pending_amount_cents"`
+	CurrentTime          time.Time `json:"current_time"`
+	CutoffTime           time.Time `json:"cutoff_time"`
+	PastCutoff           bool      `json:"past_cutoff"`
+	PendingDepositCount  int       `json:"pending_deposit_count"`
+	PendingAmountCents   int64     `json:"pending_amount_cents"`
+	InBatchCount         int       `json:"in_batch_count"`
+	InBatchAmountCents   int64     `json:"in_batch_amount_cents"`
+	RolledCount          int       `json:"rolled_count"`
+	RolledAmountCents    int64     `json:"rolled_amount_cents"`
 }
 
 // ListBatches returns all settlement batches ordered newest first.
@@ -559,22 +563,40 @@ func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
 	now := time.Now().UTC()
 	cutoff := CutoffTime(now)
 
-	var count int
+	var totalCount int
 	var totalCents int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(amount_cents),0)
 		FROM transfers
 		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL`).
-		Scan(&count, &totalCents)
+		Scan(&totalCount, &totalCents)
 	if err != nil {
 		return nil, fmt.Errorf("settlement: querying pending deposits: %w", err)
 	}
+
+	var inBatchCount int
+	var inBatchCents int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_cents),0)
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL AND created_at <= $1`,
+		cutoff).Scan(&inBatchCount, &inBatchCents)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying in-batch deposits: %w", err)
+	}
+
+	rolledCount := totalCount - inBatchCount
+	rolledCents := totalCents - inBatchCents
 
 	return &EODStatus{
 		CurrentTime:         now,
 		CutoffTime:          cutoff,
 		PastCutoff:          now.After(cutoff),
-		PendingDepositCount: count,
+		PendingDepositCount: totalCount,
 		PendingAmountCents:  totalCents,
+		InBatchCount:        inBatchCount,
+		InBatchAmountCents:  inBatchCents,
+		RolledCount:         rolledCount,
+		RolledAmountCents:   rolledCents,
 	}, nil
 }
