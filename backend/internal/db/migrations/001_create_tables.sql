@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS correspondents (
 CREATE TABLE IF NOT EXISTS accounts (
     id               VARCHAR(50) PRIMARY KEY,
     correspondent_id VARCHAR(50) NOT NULL REFERENCES correspondents(id),
-    account_type     VARCHAR(20) NOT NULL CHECK (account_type IN ('individual','retirement','joint')),
+    account_type     VARCHAR(20) NOT NULL CHECK (account_type IN ('individual','joint','retirement','ira_traditional','ira_roth')),
     status           VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','closed')),
     created_at       TIMESTAMPTZ DEFAULT NOW()
 );

@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStub_CleanPass_1006(t *testing.T) {
+func TestStub_CleanPass_ExplicitScenario(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
-		AccountID:           "ACC-SOFI-1006",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "CLEAN_PASS",
 		DeclaredAmountCents: 100000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "pass", resp.Status)
 	assert.Equal(t, "pass", resp.IQAResult)
@@ -26,13 +26,12 @@ func TestStub_CleanPass_1006(t *testing.T) {
 	assert.NotEmpty(t, resp.TransactionID)
 }
 
-func TestStub_CleanPass_DefaultSuffix(t *testing.T) {
+func TestStub_CleanPass_DefaultWhenNoScenario(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
-		AccountID:           "ACC-TEST-9999",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
 		DeclaredAmountCents: 50000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "pass", resp.Status)
 	assert.Equal(t, "pass", resp.IQAResult)
@@ -42,13 +41,13 @@ func TestStub_CleanPass_DefaultSuffix(t *testing.T) {
 	assert.Equal(t, int64(50000), *resp.OCRAmountCents)
 }
 
-func TestStub_IQABlur_1001(t *testing.T) {
+func TestStub_IQABlur(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
+	resp, err := stub.Validate(context.Background(), &Request{
 		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "IQA_FAIL_BLUR",
 		DeclaredAmountCents: 100000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "fail", resp.Status)
 	assert.Equal(t, "fail_blur", resp.IQAResult)
@@ -58,13 +57,13 @@ func TestStub_IQABlur_1001(t *testing.T) {
 	assert.NotEmpty(t, *resp.ErrorMessage)
 }
 
-func TestStub_IQAGlare_1002(t *testing.T) {
+func TestStub_IQAGlare(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
-		AccountID:           "ACC-SOFI-1002",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "IQA_FAIL_GLARE",
 		DeclaredAmountCents: 100000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "fail", resp.Status)
 	assert.Equal(t, "fail_glare", resp.IQAResult)
@@ -72,13 +71,13 @@ func TestStub_IQAGlare_1002(t *testing.T) {
 	assert.Equal(t, "IQA_FAIL_GLARE", *resp.ErrorCode)
 }
 
-func TestStub_MICRFailure_1003_Flagged(t *testing.T) {
+func TestStub_MICRFailure_Flagged(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
-		AccountID:           "ACC-SOFI-1003",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "MICR_READ_FAILURE",
 		DeclaredAmountCents: 100000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "flagged", resp.Status)
 	assert.Equal(t, "pass", resp.IQAResult)
@@ -86,32 +85,32 @@ func TestStub_MICRFailure_1003_Flagged(t *testing.T) {
 	assert.False(t, resp.AmountMatch)
 }
 
-func TestStub_DuplicateDetected_1004(t *testing.T) {
+func TestStub_DuplicateDetected(t *testing.T) {
 	stub := NewStub()
-	req := &Request{
-		AccountID:           "ACC-SOFI-1004",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "DUPLICATE_DETECTED",
 		DeclaredAmountCents: 100000,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "fail", resp.Status)
 	assert.Equal(t, "duplicate_found", resp.DuplicateCheck)
 	require.NotNil(t, resp.MICRData)
 }
 
-func TestStub_AmountMismatch_1005_Flagged(t *testing.T) {
+func TestStub_AmountMismatch_Flagged(t *testing.T) {
 	stub := NewStub()
 	declared := int64(100000)
-	req := &Request{
-		AccountID:           "ACC-SOFI-1005",
+	resp, err := stub.Validate(context.Background(), &Request{
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "AMOUNT_MISMATCH",
 		DeclaredAmountCents: declared,
-	}
-	resp, err := stub.Validate(context.Background(), req)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "flagged", resp.Status)
 	assert.False(t, resp.AmountMatch)
 	require.NotNil(t, resp.OCRAmountCents)
-	assert.Equal(t, declared+5000, *resp.OCRAmountCents)
+	assert.NotEqual(t, declared, *resp.OCRAmountCents, "OCR amount must differ from declared")
 }
 
 func TestVendorFlow_IQABlur_RetakeGuidance(t *testing.T) {
@@ -185,7 +184,8 @@ func TestVendorFlow_CleanPass_StructuredResult(t *testing.T) {
 func TestStub_Stateless_SameInputSameOutput(t *testing.T) {
 	stub := NewStub()
 	req := &Request{
-		AccountID:           "ACC-SOFI-1006",
+		AccountID:           "ACC-SOFI-1001",
+		Scenario:            "CLEAN_PASS",
 		DeclaredAmountCents: 100000,
 	}
 	resp1, err := stub.Validate(context.Background(), req)

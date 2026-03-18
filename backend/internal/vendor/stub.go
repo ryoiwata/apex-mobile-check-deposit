@@ -6,24 +6,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// Stub returns deterministic responses keyed by the last 4 chars of AccountID.
+// Stub returns deterministic responses keyed by req.Scenario.
 type Stub struct{}
 
 // NewStub creates a new vendor stub.
 func NewStub() *Stub { return &Stub{} }
 
-// Validate returns a deterministic response based on req.Scenario when set, falling
-// back to the last 4 characters of AccountID for backward compatibility with tests
-// that construct Request without a Scenario field.
+// Validate returns a deterministic response based on req.Scenario.
+// If Scenario is empty the stub defaults to clean pass.
 func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
 	txID := "VND-" + uuid.New().String()
 
-	scenario := req.Scenario
-	if scenario == "" {
-		scenario = scenarioFromSuffix(extractSuffix(req.AccountID))
-	}
-
-	switch scenario {
+	switch req.Scenario {
 	case "IQA_FAIL_BLUR":
 		return iqaFailBlur(txID), nil
 	case "IQA_FAIL_GLARE":
@@ -37,34 +31,6 @@ func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
 	default:
 		return cleanPass(txID, req.DeclaredAmountCents), nil
 	}
-}
-
-// scenarioFromSuffix maps the legacy account ID suffix to a scenario code.
-// Preserves backward compatibility for existing tests that set AccountID but not Scenario.
-func scenarioFromSuffix(suffix string) string {
-	switch suffix {
-	case "1001":
-		return "IQA_FAIL_BLUR"
-	case "1002":
-		return "IQA_FAIL_GLARE"
-	case "1003":
-		return "MICR_READ_FAILURE"
-	case "1004":
-		return "DUPLICATE_DETECTED"
-	case "1005":
-		return "AMOUNT_MISMATCH"
-	default:
-		return "CLEAN_PASS"
-	}
-}
-
-// extractSuffix returns the last 4 chars of accountID.
-// "ACC-SOFI-1003" → "1003"
-func extractSuffix(accountID string) string {
-	if len(accountID) < 4 {
-		return accountID
-	}
-	return accountID[len(accountID)-4:]
 }
 
 func iqaFailBlur(txID string) *Response {
