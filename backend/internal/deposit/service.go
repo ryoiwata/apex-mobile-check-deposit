@@ -23,7 +23,7 @@ const transferSelectCols = `
 	flag_reason, contribution_type, vendor_transaction_id, micr_routing,
 	micr_account, micr_serial, micr_confidence, ocr_amount_cents,
 	front_image_ref, back_image_ref, settlement_batch_id, return_reason,
-	verified_amount_cents, created_at, updated_at`
+	rejection_reason, verified_amount_cents, created_at, updated_at`
 
 // SubmitRequest contains all data from the multipart form, prepared by the handler.
 type SubmitRequest struct {
@@ -135,13 +135,31 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 	// 4. Store vendor result on transfer
 	s.updateTransferVendorData(ctx, transfer, vendorResp)
 
-	// 5. Handle vendor failure — populate retake guidance for IQA failures
+	// 5. Handle vendor failure — store rejection reason for IQA/duplicate failures
 	if vendorResp.Status == "fail" {
+		// Determine human-readable rejection reason to store on the transfer.
+		rejectionReason := ""
+		if vendorResp.RetakeGuidance != "" {
+			rejectionReason = vendorResp.RetakeGuidance
+		} else if vendorResp.ErrorMessage != nil && *vendorResp.ErrorMessage != "" {
+			rejectionReason = *vendorResp.ErrorMessage
+		} else if vendorResp.ErrorCode != nil {
+			rejectionReason = *vendorResp.ErrorCode
+		}
+
 		tx, _ := s.machine.BeginAndTransition(ctx, transfer.ID,
 			models.StatusValidating, models.StatusRejected, "system",
 			map[string]any{"vendor_error": vendorResp.ErrorCode})
+		if rejectionReason != "" {
+			tx.ExecContext(ctx,
+				`UPDATE transfers SET rejection_reason=$1, updated_at=NOW() WHERE id=$2`,
+				rejectionReason, transfer.ID)
+		}
 		tx.Commit()
 		transfer.Status = models.StatusRejected
+		if rejectionReason != "" {
+			transfer.RejectionReason = &rejectionReason
+		}
 		if vendorResp.RetakeGuidance != "" {
 			transfer.RetakeGuidance = &vendorResp.RetakeGuidance
 		}
@@ -484,7 +502,7 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
 		&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
 		&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
-		&t.ReturnReason, &t.VerifiedAmountCents, &t.CreatedAt, &t.UpdatedAt,
+		&t.ReturnReason, &t.RejectionReason, &t.VerifiedAmountCents, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

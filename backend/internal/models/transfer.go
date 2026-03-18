@@ -41,6 +41,7 @@ type Transfer struct {
 	BackImageRef        *string        `json:"back_image_ref,omitempty" db:"back_image_ref"`
 	SettlementBatchID   *uuid.UUID     `json:"settlement_batch_id,omitempty" db:"settlement_batch_id"`
 	ReturnReason         *string        `json:"return_reason,omitempty" db:"return_reason"`
+	RejectionReason      *string        `json:"rejection_reason,omitempty" db:"rejection_reason"`
 	VerifiedAmountCents  *int64         `json:"verified_amount_cents,omitempty" db:"verified_amount_cents"`
 	CreatedAt            time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at" db:"updated_at"`

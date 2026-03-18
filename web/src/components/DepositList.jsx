@@ -83,29 +83,40 @@ export default function DepositList({ accountId, selectedTransferId, onSelect })
               onClick={() => onSelect?.(d.transfer_id)}
               style={{
                 padding: '10px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
                 cursor: 'pointer',
                 borderTop: i > 0 ? '1px solid #f3f4f6' : 'none',
                 backgroundColor: selectedTransferId === d.transfer_id ? '#eff6ff' : 'white',
               }}
             >
-              <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase shrink-0 ${STATUS_STYLES[d.status] || 'bg-gray-100 text-gray-700'}`}>
-                {d.status?.replace('_', ' ')}
-              </span>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{fmtCents(d.amount_cents)}</span>
-              {d.flagged && (
-                <span className="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700 shrink-0">
-                  flagged
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase shrink-0 ${STATUS_STYLES[d.status] || 'bg-gray-100 text-gray-700'}`}>
+                  {d.status?.replace('_', ' ')}
                 </span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{fmtCents(d.amount_cents)}</span>
+                {d.flagged && (
+                  <span className="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700 shrink-0">
+                    flagged
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {fmtDate(d.created_at)}
+                </span>
+                <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#cbd5e1', flexShrink: 0 }}>
+                  {d.transfer_id?.slice(0, 8)}…
+                </span>
+              </div>
+              {d.status === 'rejected' && d.rejection_reason && (
+                <div style={{ marginTop: 3, paddingLeft: 2, fontSize: 11, color: '#dc2626', display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                  <span style={{ color: '#9ca3af' }}>↳</span>
+                  <span>{d.rejection_reason}</span>
+                </div>
               )}
-              <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {fmtDate(d.created_at)}
-              </span>
-              <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#cbd5e1', flexShrink: 0 }}>
-                {d.transfer_id?.slice(0, 8)}…
-              </span>
+              {d.status === 'returned' && d.return_reason && (
+                <div style={{ marginTop: 3, paddingLeft: 2, fontSize: 11, color: '#ea580c', display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                  <span style={{ color: '#9ca3af' }}>↳</span>
+                  <span>Returned: {d.return_reason} (+ $30 fee)</span>
+                </div>
+              )}
             </div>
           ))}
         </div>

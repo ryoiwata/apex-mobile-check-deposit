@@ -161,6 +161,14 @@ export default function TransferStatus({ initialTransferId, onStartNewDeposit })
             <FieldRow label="Updated" value={fmtDate(transfer.updated_at)} />
           </div>
 
+          {/* Rejection reason */}
+          {transfer.status === 'rejected' && transfer.rejection_reason && (
+            <div className="p-4 bg-red-50 border-t border-red-200 space-y-1">
+              <p className="text-sm font-semibold text-red-800">Rejection Reason</p>
+              <p className="text-sm text-red-700">{transfer.rejection_reason}</p>
+            </div>
+          )}
+
           {/* Return notification */}
           {transfer.status === 'returned' && (
             <div className="p-4 bg-orange-50 border-t border-orange-200 space-y-2">
@@ -189,13 +197,23 @@ export default function TransferStatus({ initialTransferId, onStartNewDeposit })
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">State History</h3>
               <ol className="space-y-1">
                 {transfer.state_history.map((h, i) => (
-                  <li key={i} className="flex items-center gap-2 text-xs text-gray-600">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
-                    <span className="font-mono">{h.from}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="font-mono font-medium">{h.to}</span>
-                    <span className="text-gray-400 ml-auto">{fmtDate(h.at)}</span>
-                    {h.triggered_by && <span className="text-gray-400">by {h.triggered_by}</span>}
+                  <li key={i} className="flex flex-col gap-0.5 text-xs">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-0.5" />
+                      <span className="font-mono">{h.from_state || 'created'}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="font-mono font-medium">{h.to_state}</span>
+                      <span className="text-gray-400 ml-auto whitespace-nowrap">{fmtDate(h.created_at)}</span>
+                    </div>
+                    {h.triggered_by && (
+                      <span className="text-gray-400 pl-3.5">by {h.triggered_by}</span>
+                    )}
+                    {h.to_state === 'rejected' && h.metadata?.reason && (
+                      <span className="text-red-600 pl-3.5">Reason: {h.metadata.reason}</span>
+                    )}
+                    {h.to_state === 'rejected' && h.metadata?.vendor_error && (
+                      <span className="text-red-600 pl-3.5">Vendor error: {h.metadata.vendor_error}</span>
+                    )}
                   </li>
                 ))}
               </ol>

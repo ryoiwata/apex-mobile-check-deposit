@@ -208,6 +208,15 @@ func (s *Service) Reject(
 		return nil, fmt.Errorf("operator: transitioning to rejected: %w", err)
 	}
 
+	// Store rejection reason on the transfer for display in list/detail views.
+	if reason != "" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE transfers SET rejection_reason=$1, updated_at=NOW() WHERE id=$2`,
+			reason, transferID); err != nil {
+			return nil, fmt.Errorf("operator: storing rejection reason: %w", err)
+		}
+	}
+
 	// Write audit log entry in the same transaction.
 	if err := LogActionTx(ctx, tx, operatorID, "reject", transferID, notes,
 		map[string]any{
@@ -223,6 +232,9 @@ func (s *Service) Reject(
 	}
 
 	transfer.Status = models.StatusRejected
+	if reason != "" {
+		transfer.RejectionReason = &reason
+	}
 	return transfer, nil
 }
 
