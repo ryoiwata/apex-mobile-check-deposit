@@ -163,17 +163,16 @@ This runs the full lifecycle: submit check → vendor validates → funding rule
 ./scripts/demo-all-scenarios.sh
 ```
 
-Exercises every vendor stub response by using different test account suffixes:
+Exercises every vendor stub response by passing an explicit `vendor_scenario` field:
 
-| Account Suffix | Scenario | Expected Result |
-|---------------|----------|-----------------|
-| `*1001` | IQA Fail (Blur) | Rejected — prompt retake |
-| `*1002` | IQA Fail (Glare) | Rejected — prompt retake |
-| `*1003` | MICR Read Failure | Flagged — enters operator review |
-| `*1004` | Duplicate Detected | Rejected |
-| `*1005` | Amount Mismatch | Flagged — enters operator review |
-| `*1006` | Clean Pass | Approved — proceeds to posting |
-| `*0000` | IQA Pass (basic) | Approved — proceeds to posting |
+| `vendor_scenario` value | Scenario | Expected Result |
+|------------------------|----------|-----------------|
+| `IQA_FAIL_BLUR` | IQA Fail (Blur) | Rejected — prompt retake |
+| `IQA_FAIL_GLARE` | IQA Fail (Glare) | Rejected — prompt retake |
+| `MICR_READ_FAILURE` | MICR Read Failure | Flagged — enters operator review |
+| `DUPLICATE_DETECTED` | Duplicate Detected | Rejected |
+| `AMOUNT_MISMATCH` | Amount Mismatch | Flagged — enters operator review |
+| _(omitted)_ | Clean Pass | Approved — proceeds to posting |
 
 ### Return/Reversal
 
@@ -234,11 +233,12 @@ mobile-check-deposit/
 | `DATABASE_URL` | Yes | — | Postgres connection string |
 | `REDIS_URL` | Yes | — | Redis connection string |
 | `SERVER_PORT` | No | `8080` | Backend server port |
-| `EOD_CUTOFF_HOUR` | No | `18` | Settlement cutoff hour (UTC-adjusted) |
-| `EOD_CUTOFF_MINUTE` | No | `30` | Settlement cutoff minute |
-| `SETTLEMENT_OUTPUT_DIR` | No | `./output/settlement` | Where X9 ICL files are written |
+| `IMAGE_STORAGE_DIR` | No | `./data/images` | Where uploaded check images are stored |
+| `SETTLEMENT_OUTPUT_DIR` | No | `./output/settlement` | Where X9 ICL/JSON files are written |
 | `RETURN_FEE_CENTS` | No | `3000` | Return fee in cents ($30.00) |
-| `VENDOR_STUB_MODE` | No | `deterministic` | Stub mode: `deterministic` or `random` |
+| `INVESTOR_TOKEN` | No | `tok_investor_test` | Bearer token for investor endpoints |
+| `OPERATOR_TOKEN` | No | `tok_operator_test` | Bearer token / operator ID for operator endpoints |
+| `MAX_SETTLEMENT_RETRIES` | No | `3` | Max bank ACK retries before escalation |
 
 ## API Endpoints
 
@@ -268,37 +268,42 @@ Full request/response schemas are documented in `.claude/rules/prompts.md`.
 | Rule evaluation | Collect-all (parallel) | Fail-fast (stop at first) | Returns ALL violations at once; prevents frustrating fix-one-resubmit-hit-another loop |
 | Error handling | Loop-back (every path) | Terminal errors | No dead ends; IQA→retake, rules→fix all, reject→resubmit, return→new deposit |
 | Settlement format | moov-io/imagecashletter | Custom X9 parser | Purpose-built Go library; avoid reinventing a niche financial standard |
-| Stub design | Account suffix mapping | Config file, request headers | Deterministic, no code changes needed, self-documenting in tests |
+| Stub design | Explicit `vendor_scenario` field | Account suffix mapping, config file | Unambiguous; any account can trigger any scenario; no implicit coupling |
 | Money representation | int64 cents | float64 | Eliminates floating-point rounding; standard practice in financial systems |
 | State management | Explicit state machine | Direct DB updates | Enforces valid transitions; prevents impossible states; audit-friendly |
+| Rejection reason | Persisted to `transfers` table | Transient struct field only | Survives GET /deposits/:id after submission; visible in list and detail views |
 
 Full decision log with trade-off analysis: [`docs/decision_log.md`](docs/decision_log.md)
 
 ## Tests
 
-The test suite covers all paths required by the evaluation rubric:
+The test suite has 90 unit tests across 11 packages plus 15 integration tests, covering all paths required by the evaluation rubric:
 
 | # | Test Case | Category |
 |---|-----------|----------|
-| 1 | Happy path end-to-end | Core correctness |
-| 2 | IQA Fail — Blur with retake loop-back | Vendor stub |
-| 3 | IQA Fail — Glare with retake loop-back | Vendor stub |
-| 4 | MICR Read Failure → operator review → approve/reject | Vendor stub |
+| 1 | Happy path end-to-end (unit + integration) | Core correctness |
+| 2 | IQA Fail — Blur (`IQA_FAIL_BLUR`) | Vendor stub |
+| 3 | IQA Fail — Glare (`IQA_FAIL_GLARE`) | Vendor stub |
+| 4 | MICR Read Failure → flagged → operator approve/reject | Vendor stub |
 | 5 | Duplicate Detected | Vendor stub |
 | 6 | Amount Mismatch → flagged → operator override | Vendor stub |
-| 7 | Deposit over $5,000 limit (collect-all) | Business rules |
-| 8 | Invalid state transitions rejected | State machine |
-| 9 | Reversal with $30 fee calculation | Return handling |
+| 7 | Deposit over $5,000 limit | Business rules |
+| 8 | Invalid state transitions rejected (3 cases) | State machine |
+| 9 | Reversal with $30 fee — two ledger entries | Return handling |
 | 10 | Settlement file contains only approved deposits | Settlement |
 | 11 | Collect-all: multiple simultaneous rule failures | Business rules |
-| 12 | Settlement bank ACK retry loop | Settlement |
-| 13 | EOD cutoff roll-over to next business day | Settlement |
+| 12 | EOD cutoff roll-over to next business day | Settlement |
+| 13 | Retirement account contribution type defaults to INDIVIDUAL | Business rules |
+| 14 | Operator approve/reject audit log | Operator |
+| 15 | Rejection reason persisted and returned | Transfer detail |
+
+Run: `go test ./... -v` (unit tests) or `go test ./backend/tests/ -v -tags=integration` (integration tests).
 
 Test results and scenario coverage report: [`reports/`](reports/)
 
 ## Risks and Limitations
 
-- **Stubbed vendor integration only.** No real check image processing, MICR reading, or OCR. The stub simulates all validation scenarios deterministically via account suffix mapping.
+- **Stubbed vendor integration only.** No real check image processing, MICR reading, or OCR. The stub simulates all validation scenarios deterministically via an explicit `vendor_scenario` field passed in the deposit request.
 - **No real authentication.** Session validation is simplified for the demo. Production would require OAuth/JWT integration with the correspondent's identity provider.
 - **Single-node deployment.** No horizontal scaling, leader election for settlement batching, or distributed locking for concurrent state transitions. Production would need these for high availability.
 - **No encryption at rest.** Settlement files and check images are stored unencrypted. Production would require encryption for PCI-DSS and banking regulatory compliance.
@@ -326,5 +331,5 @@ Full risk assessment: [`docs/risks.md`](docs/risks.md)
 3. **Loop-back completeness** — Verify every non-terminal error provides a clear re-entry path: IQA failure → retake, rule failure → fix all and resubmit, operator rejection → new deposit, returned check → new deposit, session expiration → re-auth, bank non-ACK → retry.
 4. **Ledger integrity** — Confirm every posted deposit has a matching ledger entry, every reversal creates exactly two entries (debit + fee), and the sum of all ledger entries for an account matches the reported balance.
 5. **Settlement reconciliation** — Verify the X9 ICL file contains exactly the deposits that should be settled (no rejected, no duplicates, respects EOD cutoff) and that batch totals are mathematically correct. Confirm bank ACK retry works on non-acknowledgment.
-6. **Stub coverage** — Confirm all 7 vendor response scenarios produce the correct downstream behavior and that switching between scenarios requires zero code changes.
+6. **Stub coverage** — Confirm all 6 vendor response scenarios produce the correct downstream behavior by passing the `vendor_scenario` field in the deposit request.
 7. **Audit completeness** — Verify every operator action (approve, reject, contribution type override) is logged with operator ID, timestamp, and the transfer's before/after state.

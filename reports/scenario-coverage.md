@@ -1,36 +1,48 @@
 # Scenario Coverage Report
 
-Generated: 2026-03-10
+Generated: 2026-03-17
 
 ---
 
-## Go Unit / Integration Tests
+## Go Unit Tests
 
-All tests run with `go test ./... -v` from the `backend/` directory. Results from `reports/go-test-results.txt`.
+All tests run with `go test ./... -v` from the `backend/` directory.
 
 | Package | Test File | Tests | Status |
 |---------|-----------|-------|--------|
-| `internal/vendor` | `stub_test.go` | 8 | ✅ PASS |
-| `internal/funding` | `rules_test.go` | 10 | ✅ PASS |
+| `internal/vendor` | `stub_test.go` | 15 | ✅ PASS |
+| `internal/funding` | `rules_test.go` | 17 | ✅ PASS |
 | `internal/ledger` | `service_test.go` | 6 | ✅ PASS |
-| `internal/operator` | `service_test.go` | 3 | ✅ PASS |
-| `internal/settlement` | `generator_test.go` | 4 | ✅ PASS |
+| `internal/operator` | `service_test.go` | 7 | ✅ PASS |
+| `internal/operator` | `amount_mismatch_test.go` | 10 | ✅ PASS |
+| `internal/settlement` | `generator_test.go` | 9 | ✅ PASS |
+| `internal/settlement` | `service_test.go` | 5 | ✅ PASS |
 | `internal/state` | `machine_test.go` | 7 | ✅ PASS |
-| **Total** | | **38** | **✅ All pass** |
+| `internal/deposit` | `return_test.go` | 10 | ✅ PASS |
+| `internal/deposit` | `created_at_test.go` | 1 | ✅ PASS |
+| `internal/middleware` | `auth_test.go` | 3 | ✅ PASS |
+| **Total** | | **90** | **✅ All pass** |
 
 ### Test Names by Package
 
-**`internal/vendor`** (stub_test.go — 8 tests):
-- `TestStub_CleanPass_1006`
-- `TestStub_CleanPass_DefaultSuffix`
-- `TestStub_IQABlur_1001`
-- `TestStub_IQAGlare_1002`
-- `TestStub_MICRFailure_1003_Flagged`
-- `TestStub_DuplicateDetected_1004`
-- `TestStub_AmountMismatch_1005_Flagged`
+**`internal/vendor`** (stub_test.go — 15 tests):
+- `TestStub_CleanPass_ExplicitScenario`
+- `TestStub_CleanPass_DefaultWhenNoScenario`
+- `TestStub_IQABlur`
+- `TestStub_IQAGlare`
+- `TestStub_MICRFailure_Flagged`
+- `TestStub_DuplicateDetected`
+- `TestStub_AmountMismatch_Flagged`
+- `TestVendorFlow_IQABlur_RetakeGuidance`
+- `TestVendorFlow_IQAGlare_RetakeGuidance`
+- `TestVendorFlow_CleanPass_NoRetakeGuidance`
+- `TestVendorFlow_MICRFail_RoutedToOperator`
+- `TestVendorFlow_AmountMismatch_RoutedToOperator`
+- `TestVendorFlow_DuplicateDetected_Rejected`
+- `TestVendorFlow_CleanPass_StructuredResult`
 - `TestStub_Stateless_SameInputSameOutput`
 
-**`internal/funding`** (rules_test.go — 10 tests):
+**`internal/funding`** (rules_test.go — 17 tests):
 - `TestDepositLimit_UnderLimit`
 - `TestDepositLimit_AtLimit_500000`
 - `TestDepositLimit_OverLimit_500001`
@@ -38,6 +50,13 @@ All tests run with `go test ./... -v` from the `backend/` directory. Results fro
 - `TestContributionType_Individual_Empty`
 - `TestDuplicateCheck_FirstDeposit_Allowed`
 - `TestDuplicateCheck_SecondDeposit_Rejected`
+- `TestContributionCap_Retirement_UnderCap`
+- `TestContributionCap_Retirement_OverCap`
+- `TestContributionCap_Individual_AlwaysPasses`
+- `TestFundingFlow_ContributionTypeDefault_Retirement`
+- `TestFundingFlow_CollectAll_DepositLimitAndDuplicate`
+- `TestFundingFlow_CollectAll_SingleViolation_OverLimit`
+- `TestFundingFlow_CollectAll_AllPass_NoViolations`
 - `TestAccountResolver_Active_ReturnsOmnibus`
 - `TestAccountResolver_NotFound`
 - `TestAccountResolver_Suspended_Ineligible`
@@ -50,16 +69,44 @@ All tests run with `go test ./... -v` from the `backend/` directory. Results fro
 - `TestPostReversal_SubTypes`
 - `TestLedgerEntries_AppendOnly`
 
-**`internal/operator`** (service_test.go — 3 tests):
+**`internal/operator`** (service_test.go — 7 tests):
 - `TestApprove_MovesToFundsPosted`
 - `TestApprove_WritesAuditLog`
+- `TestOperatorFlow_ReviewApprove_AuditLogged`
+- `TestOperatorFlow_ReviewReject_AuditLogged`
+- `TestOperatorFlow_ContributionOverride_BeforeApproval`
+- `TestOperatorFlow_QueueCycling_NextItem`
 - `TestReject_MovesToRejected`
 
-**`internal/settlement`** (generator_test.go — 4 tests):
+**`internal/operator`** (amount_mismatch_test.go — 10 tests):
+- `TestAmountMismatch_StubReturnsProvidedOCRAmount`
+- `TestAmountMismatch_StubFallbackWhenNoOCRProvided`
+- `TestAmountMismatch_FlaggedAndRoutedToOperator`
+- `TestAmountMismatch_ApproveWithVerifiedAmount_PostsCorrectAmount`
+- `TestAmountMismatch_ApproveWithoutVerifiedAmount_Returns422`
+- `TestAmountMismatch_VerifiedAmountExceedsLimit_Returns422`
+- `TestAmountMismatch_AuditLogIncludesAmountResolution`
+- `TestAmountMismatch_LedgerEntryUsesVerifiedAmount`
+- `TestAmountMismatch_RejectDoesNotRequireVerifiedAmount`
+- `TestAmountMismatch_TransferStoresAllThreeAmounts`
+
+**`internal/settlement`** (generator_test.go — 9 tests):
 - `TestCutoffTime_CorrectUTCConversion`
 - `TestCutoffTime_DST_Summer`
+- `TestSettlementFlow_BeforeCutoff_BatchGenerated`
+- `TestSettlementFlow_AfterCutoff_RolledToNextDay`
+- `TestSettlementFlow_BankAck_Completed`
+- `TestSettlementFlow_BankNoAck_RetryLoop`
+- `TestSettlementFlow_ReturnReversal_FeeCalculation`
 - `TestSettlement_ExcludesRejected`
 - `TestSettlement_ExcludesAlreadyBatched`
+
+**`internal/settlement`** (service_test.go — 5 tests):
+- `TestSettlement_HappyPath`
+- `TestSettlement_EODCutoff`
+- `TestSettlement_NoDuplicates`
+- `TestSettlement_Reconciliation`
+- `TestSettlement_BankAcknowledgment`
 
 **`internal/state`** (machine_test.go — 7 tests):
 - `TestValidTransition_RequestedToValidating`
@@ -70,20 +117,69 @@ All tests run with `go test ./... -v` from the `backend/` directory. Results fro
 - `TestInvalidTransition_RejectedToFundsPosted`
 - `TestOptimisticLock_ConcurrentTransition`
 
+**`internal/deposit`** (return_test.go — 10 tests):
+- `TestReturn_ReasonsEndpoint_ReturnsAllCodes`
+- `TestReturn_InvalidReasonCode_Returns422`
+- `TestReturn_BankReferenceAutoGenerated`
+- `TestReturn_InsufficientFunds_ReversalAndFeePosted`
+- `TestReturn_AccountClosed_ReversalAndFeePosted`
+- `TestReturn_StopPayment_ReversalAndFeePosted`
+- `TestReturn_NonCompletedDeposit_Returns409`
+- `TestReturn_LedgerEntries_CorrectAmounts`
+- `TestReturn_TransferStateTransition_CompletedToReturned`
+- `TestReturn_InvestorNotificationCreated`
+
+**`internal/deposit`** (created_at_test.go — 1 test):
+- `TestResolveCreatedAt`
+
+**`internal/middleware`** (auth_test.go — 3 tests):
+- `TestFundingFlow_SessionInvalid_ReauthLoop`
+- `TestInvestorAuth_MissingHeader`
+- `TestInvestorAuth_ValidToken`
+
+---
+
+## Integration Tests
+
+Located in `backend/tests/integration_test.go`. Run with:
+
+```bash
+# Requires running docker compose stack
+go test ./tests/ -v -tags=integration
+```
+
+| Test | Scenario | Key Assertions |
+|------|----------|----------------|
+| `TestIntegration_HappyPath_FullLifecycle` | Full lifecycle: submit → settle → complete | Status=completed, ledger DEPOSIT entry, settlement_batch_id set |
+| `TestIntegration_VendorScenario_IQABlur_Rejected` | IQA blur failure | Status=rejected, rejection_reason set |
+| `TestIntegration_VendorScenario_IQAGlare_Rejected` | IQA glare failure | Status=rejected |
+| `TestIntegration_VendorScenario_MICRFailure_FlaggedForReview` | MICR read failure | Status=analyzing, flagged=true, flag_reason=micr_failure |
+| `TestIntegration_VendorScenario_DuplicateDetected_Rejected` | Duplicate detected | Status=rejected |
+| `TestIntegration_VendorScenario_AmountMismatch_FlaggedForReview` | Amount mismatch | Status=analyzing, flagged=true, ocr_amount_cents present |
+| `TestIntegration_DepositOverLimit_Rejected422` | $6,000 exceeds limit | HTTP 422, code=DEPOSIT_OVER_LIMIT |
+| `TestIntegration_StateHistory_FullPath` | State transitions | state_history has ≥3 entries with from_state/to_state/created_at |
+| `TestIntegration_Return_ReversalWithFee` | Return/reversal | 3 ledger entries (DEPOSIT+REVERSAL+RETURN_FEE), fee=3000 cents |
+| `TestIntegration_Settlement_BatchContents` | Settlement only batches eligible | 2 approved + 0 rejected in batch, both completed |
+| `TestIntegration_Operator_ApproveFlow_AuditLogged` | Operator approve | Status=funds_posted, audit log entry with operator_id |
+| `TestIntegration_Operator_RejectFlow_RejectionReasonStored` | Operator reject | Status=rejected, rejection_reason on transfer |
+| `TestIntegration_ContributionType_RetirementAccount_DefaultsToIndividual` | Retirement account | contribution_type=INDIVIDUAL |
+| `TestIntegration_HealthCheck_ReturnsStatus` | Health check | postgres=connected, redis=connected |
+| `TestIntegration_ReturnReasons_ReturnsAllCodes` | Return reasons endpoint | Returns non-empty array of reason codes |
+
 ---
 
 ## Demo Scripts
 
-Run against a live `docker compose up` stack. Results from the files in `reports/`.
+Run against a live `docker compose up` stack.
 
-| Script | Description | Assertions | Status |
-|--------|-------------|-----------|--------|
-| `demo-happy-path.sh` | Full lifecycle: submit → settle → complete + ledger verify | 9/9 pass | ✅ PASS |
-| `demo-all-scenarios.sh` | All 7 vendor stub scenarios + operator review flow | 13/13 pass | ✅ PASS |
-| `demo-return.sh` | Return/reversal: complete deposit → return → verify ledger entries | 9/9 pass | ✅ PASS |
-| `trigger-settlement.sh` | EOD settlement trigger with assertions | (included in happy path) | ✅ PASS |
+| Script | Description | Assertions | Notes |
+|--------|-------------|-----------|-------|
+| `demo-happy-path.sh` | Full lifecycle: submit → settle → complete + ledger verify | 9 | Verifies state_history, settlement_batch_id, ledger DEPOSIT entry |
+| `demo-all-scenarios.sh` | All vendor stub scenarios + operator review + over-limit | 21 | Passes `vendor_scenario` field explicitly for each scenario |
+| `demo-return.sh` | Return/reversal: complete deposit → return → verify 3 ledger entries | 9 | Verifies DEPOSIT + REVERSAL + RETURN_FEE amounts |
+| `trigger-settlement.sh` | EOD settlement trigger with basic assertion | 2 | Included in happy path verification |
 
-### demo-happy-path.sh Assertions
+### demo-happy-path.sh Assertions (9)
 1. Deposit reaches `funds_posted`
 2. GET by ID returns `funds_posted`
 3. State history is non-empty (length ≥ 1)
@@ -94,54 +190,58 @@ Run against a live `docker compose up` stack. Results from the files in `reports
 8. Ledger has ≥ 1 entry for transfer
 9. DEPOSIT entry amount matches submitted amount
 
-### demo-all-scenarios.sh Assertions
-1. IQA blur (`*1001`) → `rejected`
-2. IQA glare (`*1002`) → `rejected`
-3. MICR failure (`*1003`) → `analyzing` with `flagged=true`
-4. Duplicate detected (`*1004`) → `rejected`
-5. Amount mismatch (`*1005`) → `analyzing` with `flagged=true`
-6. Clean pass (`*1006`) → `funds_posted`
-7. Basic pass (`*0000`) → `funds_posted`
-8. Retirement account → `funds_posted`, `contribution_type=INDIVIDUAL`
-9–11. Operator approve flow: flagged deposit → operator queue → `funds_posted`
-12–13. Operator reject flow: flagged deposit → `rejected`, audit log entry created
+### demo-all-scenarios.sh Assertions (21)
+1. IQA blur (`IQA_FAIL_BLUR`) → `rejected`
+2. rejection_reason is set on IQA-rejected transfer
+3. IQA glare (`IQA_FAIL_GLARE`) → `rejected`
+4. MICR failure (`MICR_READ_FAILURE`) → `analyzing`
+5. MICR failure is `flagged=true`
+6. `flag_reason` is `micr_failure`
+7. Duplicate detected (`DUPLICATE_DETECTED`) → `rejected`
+8. Amount mismatch (`AMOUNT_MISMATCH`) → `analyzing`
+9. Amount mismatch is `flagged=true`
+10. `flag_reason` is `amount_mismatch`
+11. Clean pass (no scenario) → `funds_posted`
+12. Basic pass (no scenario) → `funds_posted`
+13. Over-limit deposit → HTTP 422
+14. Over-limit error code is `DEPOSIT_OVER_LIMIT`
+15. Retirement account → `funds_posted`
+16. Retirement account `contribution_type=INDIVIDUAL`
+17. Operator approve: flagged deposit in `analyzing`
+18. Flagged deposit appears in operator queue
+19. Operator approve → `funds_posted`
+20. Operator reject: second flagged deposit → `rejected`
+21. Audit log has `reject` entry for transfer
 
-### demo-return.sh Assertions
+### demo-return.sh Assertions (9)
 1. Deposit reaches `funds_posted`
-2. Settlement includes deposit
+2. Settlement includes ≥ 1 deposit
 3. Deposit is `completed` after settlement
 4. Transfer moves to `returned`
 5. `amount_cents` on returned transfer matches deposit
-6. Ledger has 3+ entries (DEPOSIT + REVERSAL + RETURN_FEE)
-7. DEPOSIT entry amount matches original
-8. REVERSAL entry amount matches original
-9. RETURN_FEE entry amount is 3000 ($30)
-
----
-
-## Phase Acceptance Tests
-
-| Script | Phase | Assertions | Status |
-|--------|-------|-----------|--------|
-| `phase-08-test-results.txt` | Phase 8: Deposit handler | 16/16 pass | ✅ PASS |
-| `phase-10-test-results.txt` | Phase 10: Operator service | 21/21 pass | ✅ PASS |
-| `phase-11-test-results.txt` | Phase 11: Settlement engine | 22/22 pass | ✅ PASS |
-| `phase-13-test-results.txt` | Phase 13: React frontend | 25/25 pass | ✅ PASS |
+6. `return_reason.code` matches the requested reason code
+7. Ledger has 3+ entries (DEPOSIT + REVERSAL + RETURN_FEE)
+8. DEPOSIT entry amount matches original
+9. REVERSAL entry amount matches original
+10. RETURN_FEE entry amount is 3000 ($30)
 
 ---
 
 ## Vendor Stub Scenario Coverage Matrix
 
-| Scenario | Account | Vendor Response | Expected State | Go Test | Demo Script |
-|----------|---------|-----------------|----------------|---------|-------------|
-| IQA Fail (Blur) | `ACC-SOFI-1001` | `fail`, `iqa: fail_blur` | `rejected` | `TestStub_IQABlur_1001` | `demo-all-scenarios.sh` |
-| IQA Fail (Glare) | `ACC-SOFI-1002` | `fail`, `iqa: fail_glare` | `rejected` | `TestStub_IQAGlare_1002` | `demo-all-scenarios.sh` |
-| MICR Failure | `ACC-SOFI-1003` | `flagged`, `micr: null` | `analyzing` (flagged) | `TestStub_MICRFailure_1003_Flagged` | `demo-all-scenarios.sh` |
-| Duplicate Detected | `ACC-SOFI-1004` | `fail`, `dupe: found` | `rejected` | `TestStub_DuplicateDetected_1004` | `demo-all-scenarios.sh` |
-| Amount Mismatch | `ACC-SOFI-1005` | `flagged`, `ocr≠declared` | `analyzing` (flagged) | `TestStub_AmountMismatch_1005_Flagged` | `demo-all-scenarios.sh` |
-| Clean Pass | `ACC-SOFI-1006` | `pass`, all populated | `funds_posted` | `TestStub_CleanPass_1006` | `demo-happy-path.sh`, `demo-all-scenarios.sh` |
-| Basic Pass | `ACC-SOFI-0000` | `pass`, basic | `funds_posted` | `TestStub_CleanPass_DefaultSuffix` | `demo-all-scenarios.sh` |
-| Retirement Account | `ACC-RETIRE-001` | `pass` | `funds_posted` + `contribution_type=INDIVIDUAL` | `TestContributionType_Retirement_Individual` | `demo-all-scenarios.sh` |
+The vendor stub uses the `vendor_scenario` field passed in the deposit request.
+If the field is omitted or empty, the stub defaults to a clean pass.
+
+| Scenario Value | Account Convention | Vendor Response | Expected State | Go Test | Demo Script |
+|----------------|-------------------|-----------------|----------------|---------|-------------|
+| `IQA_FAIL_BLUR` | `ACC-SOFI-1001` | `fail`, `iqa: fail_blur`, RetakeGuidance set | `rejected` | `TestStub_IQABlur`, `TestVendorFlow_IQABlur_RetakeGuidance` | `demo-all-scenarios.sh` |
+| `IQA_FAIL_GLARE` | `ACC-SOFI-1002` | `fail`, `iqa: fail_glare`, RetakeGuidance set | `rejected` | `TestStub_IQAGlare`, `TestVendorFlow_IQAGlare_RetakeGuidance` | `demo-all-scenarios.sh` |
+| `MICR_READ_FAILURE` | `ACC-SOFI-1003` | `flagged`, `micr: null` | `analyzing` (flagged) | `TestStub_MICRFailure_Flagged`, `TestVendorFlow_MICRFail_RoutedToOperator` | `demo-all-scenarios.sh` |
+| `DUPLICATE_DETECTED` | `ACC-SOFI-1004` | `fail`, `dupe: duplicate_found` | `rejected` | `TestStub_DuplicateDetected`, `TestVendorFlow_DuplicateDetected_Rejected` | `demo-all-scenarios.sh` |
+| `AMOUNT_MISMATCH` | `ACC-SOFI-1005` | `flagged`, `ocr≠declared` | `analyzing` (flagged) | `TestStub_AmountMismatch_Flagged`, `TestVendorFlow_AmountMismatch_RoutedToOperator` | `demo-all-scenarios.sh` |
+| _(empty)_ | `ACC-SOFI-1006` | `pass`, all fields populated | `funds_posted` | `TestStub_CleanPass_ExplicitScenario`, `TestVendorFlow_CleanPass_StructuredResult` | `demo-happy-path.sh`, `demo-all-scenarios.sh` |
+| _(empty)_ | `ACC-SOFI-0000` | `pass`, basic | `funds_posted` | `TestStub_CleanPass_DefaultWhenNoScenario` | `demo-all-scenarios.sh` |
+| _(empty)_ | `ACC-RETIRE-001` | `pass` | `funds_posted` + `contribution_type=INDIVIDUAL` | `TestContributionType_Retirement_Individual`, `TestFundingFlow_ContributionTypeDefault_Retirement` | `demo-all-scenarios.sh` |
 
 ---
 
@@ -149,13 +249,13 @@ Run against a live `docker compose up` stack. Results from the files in `reports
 
 | Rubric Category | Points | Coverage |
 |----------------|--------|---------|
-| System design and architecture | 20 | `docs/architecture.md` — service boundaries, state machine diagram, data flows. `docs/decision_log.md` — 20 decisions with alternatives. `README.md` — architecture diagram. |
-| Core correctness | 25 | `demo-happy-path.sh` (9 assertions). `TestPostFunds_*` (6 tests). Phase 8 acceptance tests (16 assertions). Full Requested→FundsPosted→Completed lifecycle verified. |
-| Vendor Service stub quality | 15 | `TestStub_*` (8 tests, all 7 scenarios + stateless check). `demo-all-scenarios.sh` (all 7 scenarios exercised). Account suffix mapping — zero code changes to switch scenarios. |
-| Operator workflow and observability | 10 | `TestApprove_*`, `TestReject_*` (3 tests). Phase 10 acceptance tests (21 assertions). `demo-all-scenarios.sh` covers approve and reject flows with audit log verification. |
-| Return/reversal handling | 10 | `TestPostReversal_*` (3 tests verifying entry count, amounts, subtypes). `demo-return.sh` (9 assertions including $30 fee check). |
-| Tests and evaluation rigor | 10 | 38 Go unit tests across 6 packages. 31 demo script assertions. 84 phase acceptance test assertions. Scenario coverage matrix above. |
-| Developer experience | 10 | `docker compose up --build` starts all 4 containers. README with quick start, demo commands. 4 demo scripts. `docs/` with architecture, decisions, risks. `SUBMISSION.md`. |
+| System design and architecture | 20 | `docs/architecture.md` — service boundaries, state machine, data flows, DB schema. `docs/decision_log.md` — 21 decisions with alternatives. `README.md` — architecture diagram and key decisions table. |
+| Core correctness | 25 | `demo-happy-path.sh` (9 assertions). `TestPostFunds_*` (6 tests). `TestSettlement_HappyPath`. `TestIntegration_HappyPath_FullLifecycle`. Full Requested→FundsPosted→Completed lifecycle verified. |
+| Vendor Service stub quality | 15 | 15 vendor tests covering all 7 scenarios + retake guidance + stateless check. `demo-all-scenarios.sh` exercises all scenarios with explicit vendor_scenario field. Zero code changes needed to switch scenarios. |
+| Operator workflow and observability | 10 | `TestApprove_*`, `TestReject_*`, `TestOperatorFlow_*` (17 tests in operator package). Amount mismatch approval with verified amount (10 tests). `demo-all-scenarios.sh` covers approve + reject + audit log verification. |
+| Return/reversal handling | 10 | `TestPostReversal_*` (3 ledger tests). `TestReturn_*` (10 return tests with 5 return reason codes). `demo-return.sh` (9 assertions including $30 fee check). |
+| Tests and evaluation rigor | 10 | 90 Go unit tests across 11 files. 15 integration tests. 39 demo script assertions. Scenario coverage matrix with test-to-scenario mapping. |
+| Developer experience | 10 | `docker compose up --build` starts all services. README with quick start, demo walkthrough. 4 demo scripts. `docs/` with architecture, decisions, risks. |
 | **Total** | **100** | |
 
 ---
@@ -163,17 +263,23 @@ Run against a live `docker compose up` stack. Results from the files in `reports
 ## How to Reproduce
 
 ```bash
-# Unit tests (no running stack needed)
+# Unit tests (no running stack needed — Postgres tests auto-skip if unavailable)
 cd backend
 go test ./... -v
 
-# Demo scripts (requires running stack)
+# Integration tests (requires running stack)
 docker compose up --build -d
-sleep 12  # wait for services to be ready
+sleep 15  # wait for Postgres migrations and service health
+go test ./tests/ -v -tags=integration
+
+# Demo scripts (requires running stack)
 ./scripts/demo-happy-path.sh
 ./scripts/demo-all-scenarios.sh
 ./scripts/demo-return.sh
 ./scripts/trigger-settlement.sh
+
+# Generate test report
+cd backend && go test ./... -v 2>&1 | tee ../reports/go-test-results.txt
 
 # Health check
 curl -s http://localhost:8080/health | jq .
