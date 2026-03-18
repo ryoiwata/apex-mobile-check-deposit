@@ -22,7 +22,8 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
   const [approving, setApproving] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [showRejectForm, setShowRejectForm] = useState(false)
-  const [rejectReason, setRejectReason] = useState('')
+  const [selectedReason, setSelectedReason] = useState('')
+  const [customReason, setCustomReason] = useState('')
   const [actionError, setActionError] = useState(null)
   const [verifiedAmountDollars, setVerifiedAmountDollars] = useState('')
   const [lightbox, setLightbox] = useState(null)
@@ -37,7 +38,8 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
   useEffect(() => {
     setActionError(null)
     setShowRejectForm(false)
-    setRejectReason('')
+    setSelectedReason('')
+    setCustomReason('')
     setCtOverride(deposit?.contribution_type || '')
     setCtSuccess(false)
     setCtError(null)
@@ -87,14 +89,50 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
     }
   }
 
+  const micrFailureReasons = [
+    { value: 'ink_too_light',          label: 'MICR ink too light or faded' },
+    { value: 'ink_smudged',            label: 'MICR ink smudged or bleeding' },
+    { value: 'characters_damaged',     label: 'MICR characters physically damaged' },
+    { value: 'foreign_material',       label: 'Foreign material covering MICR line (tape, staples, debris)' },
+    { value: 'misaligned',             label: 'MICR line misaligned or printed incorrectly' },
+    { value: 'non_standard_font',      label: 'Non-standard MICR font used' },
+    { value: 'image_quality',          label: 'Image quality too low to read MICR' },
+    { value: 'check_folded',           label: 'Check folded or creased through MICR area' },
+    { value: 'partial_micr',           label: 'MICR line partially cut off in image' },
+    { value: 'handwriting_over_micr',  label: 'Handwriting or marks over MICR line' },
+    { value: 'unreadable',             label: 'MICR completely unreadable — reason unknown' },
+    { value: 'other',                  label: 'Other (specify below)' },
+  ]
+
+  const generalRejectionReasons = [
+    { value: 'image_altered',            label: 'Check image appears altered or manipulated' },
+    { value: 'amount_mismatch_confirmed', label: 'Amount mismatch confirmed — OCR amount is correct' },
+    { value: 'suspicious_check',          label: 'Check appears suspicious or fraudulent' },
+    { value: 'illegible_check',           label: 'Check details illegible' },
+    { value: 'invalid_endorsement',       label: 'Missing or invalid endorsement on back' },
+    { value: 'duplicate_confirmed',       label: 'Confirmed duplicate deposit' },
+    { value: 'account_mismatch',          label: "Check payee doesn't match account holder" },
+    { value: 'stale_dated',               label: 'Check is stale-dated (over 6 months old)' },
+    { value: 'post_dated',                label: 'Check is post-dated' },
+    { value: 'other',                     label: 'Other (specify below)' },
+  ]
+
+  const reasonOptions = deposit.flag_reason === 'micr_failure' ? micrFailureReasons : generalRejectionReasons
+
+  function getFinalReason() {
+    if (selectedReason === 'other') return customReason.trim()
+    return reasonOptions.find(r => r.value === selectedReason)?.label || ''
+  }
+
   async function handleReject(e) {
     e.preventDefault()
-    if (!rejectReason.trim()) return
-    if (!window.confirm(`Reject this deposit?\nReason: "${rejectReason}"`)) return
+    const reason = getFinalReason()
+    if (!reason) return
+    if (!window.confirm(`Reject this deposit?\nReason: "${reason}"`)) return
     setRejecting(true)
     setActionError(null)
     try {
-      await api.rejectDeposit(id, { reason: rejectReason.trim(), notes: '' })
+      await api.rejectDeposit(id, { reason, notes: '' })
       onAction?.()
     } catch (err) {
       setActionError(err?.error || 'Reject failed')
@@ -354,7 +392,7 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
                 : '✓ Approve Deposit'}
           </button>
           <button
-            onClick={() => setShowRejectForm(v => !v)}
+            onClick={() => { setShowRejectForm(v => !v); setSelectedReason(''); setCustomReason('') }}
             disabled={approving}
             style={{ backgroundColor: showRejectForm ? '#fee2e2' : 'white', color: '#dc2626', border: '2px solid #dc2626', borderRadius: 6, padding: '10px 22px', fontSize: 14, fontWeight: 600, cursor: 'pointer', opacity: approving ? 0.5 : 1 }}
           >
@@ -363,30 +401,45 @@ function DepositDetailTab({ deposit, onBack, onAction }) {
         </div>
 
         {showRejectForm && (
-          <form onSubmit={handleReject} style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 480 }}>
+          <form onSubmit={handleReject} style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
             <label style={{ fontSize: 13, fontWeight: 500, color: '#374151' }}>
               Rejection reason (required):
             </label>
-            <input
-              type="text"
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              placeholder="e.g. Check image appears altered, MICR data inconsistent"
-              required
+            <select
+              value={selectedReason}
+              onChange={e => { setSelectedReason(e.target.value); setCustomReason('') }}
               autoFocus
-              style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '8px 12px', fontSize: 13 }}
-            />
+              style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '8px 12px', fontSize: 13, backgroundColor: 'white' }}
+            >
+              <option value="">— Select a reason —</option>
+              {reasonOptions.map(r => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
+            {selectedReason === 'other' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, color: '#6b7280' }}>Please specify:</label>
+                <input
+                  type="text"
+                  value={customReason}
+                  onChange={e => setCustomReason(e.target.value)}
+                  placeholder="Enter custom rejection reason…"
+                  autoFocus
+                  style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '8px 12px', fontSize: 13 }}
+                />
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 type="submit"
-                disabled={rejecting || !rejectReason.trim()}
-                style={{ backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: rejecting || !rejectReason.trim() ? 'not-allowed' : 'pointer', opacity: rejecting || !rejectReason.trim() ? 0.6 : 1 }}
+                disabled={rejecting || !getFinalReason()}
+                style={{ backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: rejecting || !getFinalReason() ? 'not-allowed' : 'pointer', opacity: rejecting || !getFinalReason() ? 0.6 : 1 }}
               >
                 {rejecting ? 'Rejecting…' : 'Confirm Reject'}
               </button>
               <button
                 type="button"
-                onClick={() => { setShowRejectForm(false); setRejectReason('') }}
+                onClick={() => { setShowRejectForm(false); setSelectedReason(''); setCustomReason('') }}
                 style={{ background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 16px', fontSize: 13, cursor: 'pointer', color: '#6b7280' }}
               >
                 Cancel
