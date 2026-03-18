@@ -248,7 +248,7 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 	// Generate the settlement file FIRST — before any state changes.
 	// If generation fails, the batch record stays pending but no transfers
 	// have moved state, so the entire run is safe to retry.
-	filePath, err := Generate(transfers, s.outputDir, batchDate)
+	filePath, err := GenerateWithID(transfers, s.outputDir, batchDate, batch.ID)
 	if err != nil {
 		return nil, fmt.Errorf("settlement: generating settlement file: %w", err)
 	}
