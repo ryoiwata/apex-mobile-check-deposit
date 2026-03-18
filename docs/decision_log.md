@@ -285,15 +285,17 @@ This design philosophy ensures the deposit flow never silently drops a transacti
 
 ---
 
-## Vendor Stub: Account Suffix Mapping
+## Vendor Stub: Explicit `vendor_scenario` Field
 
-**Choice:** Last 4 characters of `account_id` determine the stub response. `ACC-SOFI-1003` → MICR failure.
+**Choice:** The deposit request accepts an optional `vendor_scenario` form field (`IQA_FAIL_BLUR`, `IQA_FAIL_GLARE`, `MICR_READ_FAILURE`, `DUPLICATE_DETECTED`, `AMOUNT_MISMATCH`). The stub routes its response based solely on this field. When absent, the stub returns a clean pass.
 
-**Alternatives considered:** Request header (`X-Vendor-Scenario`), environment variable, separate config file, random mode
+**Alternatives considered:** Account suffix mapping (route by last 4 chars of `account_id`), request header (`X-Vendor-Scenario`), environment variable, separate config file
 
-**Rationale:** Account suffix is deterministic (same account always gets same result), self-documenting (the test shows which account → which scenario), requires zero code changes or environment tweaks to switch scenarios, and is composable (tests can run in any order with no shared state).
+**Rationale:** An explicit scenario field is unambiguous — any account ID can trigger any scenario without relying on implicit suffix conventions. Account suffix mapping creates a hidden coupling between account IDs and vendor behavior that is easy to break (e.g., if an account ID is renamed or a new account is seeded with a colliding suffix). The explicit field is also visible in the request payload, making it clear during demos that a scenario is being forced.
 
-**Production note:** The `vendor.Service` interface is replaced with an HTTP client pointing at the real vendor API. The stub is only used in testing.
+The stub documentation in `CLAUDE.md` still lists the "account suffix → scenario" table as seed data context, but the routing logic itself uses only `req.Scenario`.
+
+**Production note:** The `vendor.Service` interface is replaced with an HTTP client pointing at the real vendor API. The `vendor_scenario` field is stripped at the API layer and never forwarded to the real vendor.
 
 ---
 
@@ -318,3 +320,19 @@ This design philosophy ensures the deposit flow never silently drops a transacti
 **Rationale:** `float64` has well-documented rounding issues in financial systems ($0.10 + $0.20 ≠ $0.30 in IEEE 754). `decimal.Decimal` is correct but adds a dependency and requires discipline to use consistently. `int64` cents is simple, efficient, and the standard practice in financial systems (ISO 4217 minor units). The $5,000 limit check is `> 500000` — no rounding involved.
 
 **Production note:** No change. int64 cents is correct for USD. For multi-currency support, add a `currency` field and handle minor unit differences (JPY has no cents, BHD has 3 decimal places).
+
+---
+
+## Rejection Reason: Persisted to `transfers` Table
+
+**Choice:** `rejection_reason TEXT` column on `transfers`. Populated when a vendor rejects a deposit (from `RetakeGuidance` → `ErrorMessage` → `ErrorCode`, in that priority order) and when an operator rejects a deposit (from the operator-provided reason string).
+
+**Alternatives considered:** Transient-only (return in the response but don't store), store in `state_transitions.metadata` JSONB only, store in `audit_logs` only
+
+**Rationale:** The transient approach (fields on the Go struct but no DB column) means `GET /api/v1/deposits/:id` after the initial response shows no rejection reason — the investor or support team can't retrieve why a deposit was rejected. Storing only in `state_transitions.metadata` or `audit_logs` works for internal records but requires a join to expose the reason in the standard transfer API response.
+
+Persisting directly to the `transfers` table means the reason is immediately available in `GET /deposits/:id`, the `DepositList` component can show inline rejection subtitles, and no extra query is needed.
+
+**Trade-off:** The `transfers` table gains a nullable column. For non-rejected deposits this is always NULL — minor schema overhead.
+
+**Production note:** No change. The field is useful for investor-facing notifications, support tooling, and regulatory reporting on declined transactions.

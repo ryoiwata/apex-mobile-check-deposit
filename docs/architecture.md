@@ -108,7 +108,7 @@ The backend is a single Go binary with clearly separated internal packages. Ever
 3. **Session validation**: Funding Service validates the investor session and account eligibility. If the session is invalid, the investor is prompted to re-authenticate and loops back to retry.
 4. **Deposit handler** saves images to `/data/images/{transfer_id}/front.png` and `back.png`. Creates a `Transfer` record in `Requested` state.
 5. **State machine** transitions `Requested → Validating` in its own transaction.
-6. **Vendor stub** validates the request. For a clean-pass account (suffix `*1006` or `*0000`), returns `status: "pass"` with populated MICR data and OCR amount.
+6. **Vendor stub** validates the request. When no `vendor_scenario` field is supplied (clean pass), returns `status: "pass"` with populated MICR data and OCR amount.
 7. **State machine** transitions `Validating → Analyzing`. Transfer's vendor fields (MICR routing/account/serial, OCR amount, vendor transaction ID) are updated in the same transaction.
 8. **Funding service** applies **all rules in parallel using the collect-all approach**:
    - Deposit limit check: amount ≤ $5,000 (500,000 cents)
@@ -250,12 +250,12 @@ All transitions use optimistic locking: `UPDATE transfers SET status=$1 WHERE id
 
 | Table | Purpose |
 |-------|---------|
-| `transfers` | Central entity. One row per deposit. Tracks status, MICR data, image refs, vendor result, settlement batch. |
+| `transfers` | Central entity. One row per deposit. Tracks status, MICR data, image refs, vendor result, settlement batch, `rejection_reason` (persisted for both vendor and operator rejections). |
 | `ledger_entries` | **Append-only.** One DEPOSIT entry per approved transfer. Two entries (REVERSAL + RETURN_FEE) per returned transfer. Never updated or deleted. |
-| `state_transitions` | Full audit trail of every state change. One row per transition. Contains from/to state, triggeredBy, metadata (JSONB). |
+| `state_transitions` | Full audit trail of every state change. One row per transition. Contains `from_state`, `to_state`, `triggered_by`, `metadata` (JSONB). |
 | `audit_logs` | Operator action log. One row per approve/reject/override. Contains operator_id, notes, transfer_id. |
 | `settlement_batches` | One record per EOD settlement run. Tracks file path, deposit count, total amount, bank acknowledgment status. |
-| `accounts` | Seed data for 8 investor accounts across 3 correspondents. Determines vendor stub scenario via ID suffix. |
+| `accounts` | Seed data for 8 investor accounts across 3 correspondents. |
 | `correspondents` | 3 broker-dealers (SoFi, Webull, CashApp) with omnibus account IDs. Used by funding service account resolver. |
 
 The ledger is strictly append-only. Reversals create new entries; they never modify the original DEPOSIT entry. This is enforced at the application layer (no UPDATE/DELETE in `ledger.Repository`) and noted in the schema (no DELETE cascade on ledger_entries).
@@ -274,7 +274,7 @@ The system is a **monolith with clear internal package boundaries**, not microse
 
 ## Authentication Model
 
-**Current (demo):** Two static tokens read from environment variables:
+**Current (demo):** Two static tokens read from environment variables (defaults: `tok_investor_test` / `tok_operator_test`):
 - `INVESTOR_TOKEN` — used in `Authorization: Bearer <token>` header for all deposit and ledger endpoints
 - `OPERATOR_TOKEN` — `X-Operator-ID` header value accepted by operator endpoints; also used for audit logging
 

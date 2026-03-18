@@ -40,9 +40,11 @@ type Transfer struct {
 	FrontImageRef       *string        `json:"front_image_ref,omitempty" db:"front_image_ref"`
 	BackImageRef        *string        `json:"back_image_ref,omitempty" db:"back_image_ref"`
 	SettlementBatchID   *uuid.UUID     `json:"settlement_batch_id,omitempty" db:"settlement_batch_id"`
-	ReturnReason        *string        `json:"return_reason,omitempty" db:"return_reason"`
-	CreatedAt           time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at" db:"updated_at"`
+	ReturnReason         *string        `json:"return_reason,omitempty" db:"return_reason"`
+	RejectionReason      *string        `json:"rejection_reason,omitempty" db:"rejection_reason"`
+	VerifiedAmountCents  *int64         `json:"verified_amount_cents,omitempty" db:"verified_amount_cents"`
+	CreatedAt            time.Time      `json:"created_at" db:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at" db:"updated_at"`
 	// Transient fields — not stored in DB, populated in-memory from vendor response.
 	RetakeGuidance  *string `json:"retake_guidance,omitempty" db:"-"`
 	VendorErrorCode *string `json:"vendor_error_code,omitempty" db:"-"`

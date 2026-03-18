@@ -155,6 +155,14 @@ func TestContributionCap_Individual_AlwaysPasses(t *testing.T) {
 	assert.NoError(t, err, "non-retirement accounts should never hit contribution cap")
 }
 
+// TestFundingFlow_ContributionTypeDefault_Retirement verifies that retirement accounts
+// receive the INDIVIDUAL contribution type by default — part of the funding flow.
+func TestFundingFlow_ContributionTypeDefault_Retirement(t *testing.T) {
+	ct := applyContributionType("retirement")
+	assert.Equal(t, "INDIVIDUAL", ct,
+		"retirement accounts must default to INDIVIDUAL contribution type")
+}
+
 // --- Collect-all (ApplyRules) integration tests (need Postgres + Redis) ---
 
 func TestFundingFlow_CollectAll_DepositLimitAndDuplicate(t *testing.T) {

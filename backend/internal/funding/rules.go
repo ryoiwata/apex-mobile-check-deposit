@@ -29,10 +29,19 @@ func applyDepositLimit(amountCents int64) error {
 	return nil
 }
 
+// isRetirementAccount returns true for all retirement account types.
+func isRetirementAccount(accountType string) bool {
+	switch accountType {
+	case "retirement", "ira_traditional", "ira_roth":
+		return true
+	}
+	return false
+}
+
 // applyContributionCap checks whether the deposit exceeds the account type's contribution cap.
 // Only enforced for retirement accounts (IRA-style per-transaction cap of $6,000).
 func applyContributionCap(accountType string, amountCents int64) error {
-	if accountType == "retirement" && amountCents > MaxRetirementContributionCents {
+	if isRetirementAccount(accountType) && amountCents > MaxRetirementContributionCents {
 		return fmt.Errorf("retirement account deposit exceeds per-transaction cap of $%.2f",
 			float64(MaxRetirementContributionCents)/100)
 	}
@@ -87,9 +96,9 @@ func applyDuplicateCheck(ctx context.Context, rdb *redis.Client,
 }
 
 // applyContributionType returns the contribution type based on account type.
-// Returns "INDIVIDUAL" for retirement accounts, "" for all others.
+// Returns "INDIVIDUAL" for all retirement account types, "" for all others.
 func applyContributionType(accountType string) string {
-	if accountType == "retirement" {
+	if isRetirementAccount(accountType) {
 		return "INDIVIDUAL"
 	}
 	return ""

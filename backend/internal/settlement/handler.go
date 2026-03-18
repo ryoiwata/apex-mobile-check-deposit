@@ -1,10 +1,14 @@
 package settlement
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // chicagoLoc is loaded once at package init so we don't re-load it on every request.
@@ -66,6 +70,194 @@ func (h *Handler) Trigger(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "settlement run failed: " + err.Error(),
 			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": batch})
+}
+
+// ListBatches returns all settlement batches.
+// GET /api/v1/settlement/batches
+func (h *Handler) ListBatches(c *gin.Context) {
+	batches, err := h.svc.ListBatches(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to list settlement batches",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	if batches == nil {
+		batches = []Batch{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": batches})
+}
+
+// GetBatch returns a single settlement batch with its deposits.
+// GET /api/v1/settlement/batches/:id
+func (h *Handler) GetBatch(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	detail, err := h.svc.GetBatchWithDeposits(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": detail})
+}
+
+// GetPreview returns a preview of which FundsPosted deposits will be included
+// in the next settlement batch vs. rolled to the next business day.
+// GET /api/v1/settlement/preview
+func (h *Handler) GetPreview(c *gin.Context) {
+	preview, err := h.svc.GetSettlementPreview(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get settlement preview: " + err.Error(),
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": preview})
+}
+
+// GetEODStatus returns the current EOD cutoff status and pending deposit count.
+// GET /api/v1/settlement/eod-status
+func (h *Handler) GetEODStatus(c *gin.Context) {
+	status, err := h.svc.GetEODStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get EOD status",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": status})
+}
+
+// GetFileContents returns the settlement file contents as JSON for inline viewing.
+// GET /api/v1/settlement/batches/:id/file
+func (h *Handler) GetFileContents(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	batch, err := h.svc.getBatch(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	if batch.FilePath == nil || *batch.FilePath == "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "settlement file not found for this batch",
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	fileData, err := os.ReadFile(*batch.FilePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("failed to read settlement file: %v", err),
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	var contents map[string]any
+	if err := json.Unmarshal(fileData, &contents); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to parse settlement file",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, contents)
+}
+
+// DownloadFile serves the settlement file as a downloadable attachment.
+// GET /api/v1/settlement/batches/:id/download
+func (h *Handler) DownloadFile(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	batch, err := h.svc.getBatch(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	if batch.FilePath == nil || *batch.FilePath == "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "settlement file not found for this batch",
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	if _, err := os.Stat(*batch.FilePath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "settlement file not found on disk",
+			"code":  "NOT_FOUND",
+		})
+		return
+	}
+
+	filename := fmt.Sprintf("settlement_batch_%s.json", batchID)
+	c.Header("Content-Description", "File Transfer")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Header("Content-Type", "application/json")
+	c.File(*batch.FilePath)
+}
+
+// Retry re-attempts bank submission for a batch in retry_pending state.
+// POST /api/v1/operator/settlement/retry/:batch_id
+func (h *Handler) Retry(c *gin.Context) {
+	batchID, err := uuid.Parse(c.Param("batch_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid batch_id",
+			"code":  "INVALID_INPUT",
+		})
+		return
+	}
+
+	batch, err := h.svc.RetryBatch(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": err.Error(),
+			"code":  "SETTLEMENT_RETRY_ERROR",
 		})
 		return
 	}

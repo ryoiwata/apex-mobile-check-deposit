@@ -15,6 +15,7 @@ import (
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/middleware"
+	"github.com/apex/mcd/internal/notification"
 	"github.com/apex/mcd/internal/operator"
 	"github.com/apex/mcd/internal/settlement"
 	"github.com/apex/mcd/internal/state"
@@ -23,14 +24,15 @@ import (
 
 // Config holds all server configuration loaded from environment variables.
 type Config struct {
-	DatabaseURL         string
-	RedisURL            string
-	ServerPort          string
-	ImageStorageDir     string
-	SettlementOutputDir string
-	ReturnFeeCents      int64
-	InvestorToken       string
-	OperatorToken       string
+	DatabaseURL            string
+	RedisURL               string
+	ServerPort             string
+	ImageStorageDir        string
+	SettlementOutputDir    string
+	ReturnFeeCents         int64
+	InvestorToken          string
+	OperatorToken          string
+	MaxSettlementRetries   int
 }
 
 func loadConfig() Config {
@@ -76,15 +78,23 @@ func loadConfig() Config {
 		operatorToken = "tok_operator_test"
 	}
 
+	maxSettlementRetries := settlement.DefaultMaxRetries
+	if v := os.Getenv("MAX_SETTLEMENT_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxSettlementRetries = n
+		}
+	}
+
 	return Config{
-		DatabaseURL:         databaseURL,
-		RedisURL:            redisURL,
-		ServerPort:          port,
-		ImageStorageDir:     imageDir,
-		SettlementOutputDir: settlementDir,
-		ReturnFeeCents:      returnFeeCents,
-		InvestorToken:       investorToken,
-		OperatorToken:       operatorToken,
+		DatabaseURL:          databaseURL,
+		RedisURL:             redisURL,
+		ServerPort:           port,
+		ImageStorageDir:      imageDir,
+		SettlementOutputDir:  settlementDir,
+		ReturnFeeCents:       returnFeeCents,
+		InvestorToken:        investorToken,
+		OperatorToken:        operatorToken,
+		MaxSettlementRetries: maxSettlementRetries,
 	}
 }
 
@@ -127,15 +137,18 @@ func main() {
 	depositSvc := deposit.NewService(sqlDB, machine, vendorSvc, fundingSvc, ledgerSvc)
 	operatorSvc := operator.NewService(sqlDB, machine, ledgerSvc, fundingSvc)
 	settlementSvc := settlement.NewService(sqlDB, machine, cfg.SettlementOutputDir)
+	settlementSvc.SetMaxRetries(cfg.MaxSettlementRetries)
+	notifRepo := notification.NewRepo(sqlDB)
 
 	// --- Create handlers ---
 	depositHandler := deposit.NewHandler(depositSvc, deposit.Config{
 		ImageStorageDir: cfg.ImageStorageDir,
 		ReturnFeeCents:  cfg.ReturnFeeCents,
-	})
-	operatorHandler := operator.NewHandler(operatorSvc)
+	}, notifRepo)
+	operatorHandler := operator.NewHandler(operatorSvc, notifRepo)
 	settlementHandler := settlement.NewHandler(settlementSvc)
 	ledgerHandler := ledger.NewHandler(ledgerSvc)
+	notifHandler := notification.NewHandler(notifRepo)
 
 	// --- Configure Gin router ---
 	r := gin.Default()
@@ -183,6 +196,11 @@ func main() {
 		})
 	})
 
+	// Public endpoints — no auth required
+	r.GET("/api/v1/returns/reasons", depositHandler.GetReturnReasons)
+	// Image serving — no auth required (UUIDs are not guessable; browser <img> tags can't send headers)
+	r.GET("/api/v1/deposits/:id/images/:side", depositHandler.ServeImage)
+
 	// Investor routes (require Bearer token)
 	inv := r.Group("/api/v1")
 	inv.Use(middleware.InvestorAuth(cfg.InvestorToken))
@@ -190,8 +208,12 @@ func main() {
 		inv.POST("/deposits", middleware.RateLimit(rdb, 10), depositHandler.Submit)
 		inv.GET("/deposits", depositHandler.List)
 		inv.GET("/deposits/:id", depositHandler.GetByID)
-		inv.GET("/deposits/:id/images/:side", depositHandler.ServeImage)
 		inv.GET("/ledger/:account_id", ledgerHandler.GetByAccount)
+		// Notification endpoints — investor-scoped
+		inv.GET("/notifications", notifHandler.List)
+		inv.GET("/notifications/unread-count", notifHandler.UnreadCount)
+		inv.POST("/notifications/:id/read", notifHandler.MarkRead)
+		inv.POST("/notifications/read-all", notifHandler.MarkAllRead)
 	}
 
 	// Operator routes (require X-Operator-ID header)
@@ -205,8 +227,29 @@ func main() {
 		ops.GET("/audit", operatorHandler.GetAuditLog)
 		// Return endpoint lives here — only operators can trigger returns
 		ops.POST("/deposits/:id/return", depositHandler.Return)
-		// Settlement trigger
+		// Settlement trigger and retry
 		ops.POST("/settlement/trigger", settlementHandler.Trigger)
+		ops.POST("/settlement/retry/:batch_id", settlementHandler.Retry)
+	}
+
+	// Settlement read endpoints (operator auth)
+	settle := r.Group("/api/v1/settlement")
+	settle.Use(middleware.OperatorAuth())
+	{
+		settle.GET("/batches", settlementHandler.ListBatches)
+		settle.GET("/batches/:id", settlementHandler.GetBatch)
+		settle.GET("/batches/:id/file", settlementHandler.GetFileContents)
+		settle.GET("/batches/:id/download", settlementHandler.DownloadFile)
+		settle.GET("/eod-status", settlementHandler.GetEODStatus)
+		settle.GET("/preview", settlementHandler.GetPreview)
+	}
+
+	// Admin endpoints (operator auth)
+	admin := r.Group("/api/v1/admin")
+	admin.Use(middleware.OperatorAuth())
+	{
+		admin.GET("/deposits/:id/trace", depositHandler.GetTrace)
+		admin.GET("/deposits", depositHandler.List)
 	}
 
 	log.Printf("Starting server on :%s", cfg.ServerPort)

@@ -73,12 +73,21 @@ export const api = {
       body: JSON.stringify({ batch_date: batchDate }),
     }).then(handleResponse),
 
+  retrySettlement: (batchId) =>
+    fetch(`/api/v1/operator/settlement/retry/${batchId}`, {
+      method: 'POST',
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
   overrideContributionType: (id, contributionType) =>
     fetch(`/api/v1/operator/deposits/${id}/contribution-type`, {
       method: 'PATCH',
       headers: operatorHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ contribution_type: contributionType }),
     }).then(handleResponse),
+
+  getReturnReasons: () =>
+    fetch('/api/v1/returns/reasons').then(handleResponse),
 
   returnDeposit: (id, body) =>
     fetch(`/api/v1/operator/deposits/${id}/return`, {
@@ -93,4 +102,88 @@ export const api = {
       headers: operatorHeaders(),
     }).then(handleResponse)
   },
+
+  // Settlement read endpoints
+  listBatches: () =>
+    fetch('/api/v1/settlement/batches', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getBatch: (batchId) =>
+    fetch(`/api/v1/settlement/batches/${batchId}`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getEODStatus: () =>
+    fetch('/api/v1/settlement/eod-status', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getSettlementPreview: () =>
+    fetch('/api/v1/settlement/preview', {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  getSettlementFileContents: (batchId) =>
+    fetch(`/api/v1/settlement/batches/${batchId}/file`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  downloadSettlementFile: async (batchId) => {
+    const resp = await fetch(`/api/v1/settlement/batches/${batchId}/download`, {
+      headers: operatorHeaders(),
+    })
+    if (!resp.ok) {
+      const err = await resp.json()
+      return Promise.reject(err)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `settlement_batch_${batchId}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+
+  // Admin endpoints
+  getDepositTrace: (transferId) =>
+    fetch(`/api/v1/admin/deposits/${transferId}/trace`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse),
+
+  listAllDeposits: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return fetch(`/api/v1/admin/deposits${qs ? '?' + qs : ''}`, {
+      headers: operatorHeaders(),
+    }).then(handleResponse)
+  },
+
+  getHealth: () =>
+    fetch('/health').then(handleResponse),
+
+  // Notification endpoints
+  getNotifications: (accountId) =>
+    fetch(`/api/v1/notifications?account_id=${accountId}`, {
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  getUnreadCount: (accountId) =>
+    fetch(`/api/v1/notifications/unread-count?account_id=${accountId}`, {
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  markNotificationRead: (notifId) =>
+    fetch(`/api/v1/notifications/${notifId}/read`, {
+      method: 'POST',
+      headers: investorHeaders(),
+    }).then(handleResponse),
+
+  markAllNotificationsRead: (accountId) =>
+    fetch(`/api/v1/notifications/read-all?account_id=${accountId}`, {
+      method: 'POST',
+      headers: investorHeaders(),
+    }).then(handleResponse),
 }

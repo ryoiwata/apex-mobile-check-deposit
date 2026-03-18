@@ -70,10 +70,9 @@ func (s *Service) ApplyRules(
 ) (*RuleResult, error) {
 	result := &RuleResult{RulesApplied: []string{}}
 
-	// Prerequisite: account eligibility + omnibus lookup.
-	// Hard fail — without a valid account we cannot evaluate contribution cap
-	// or determine where to post funds.
-	result.RulesApplied = append(result.RulesApplied, "account_eligibility")
+	// Prerequisite: account lookup — hard gate only on existence.
+	// If the account does not exist we cannot proceed at all.
+	// Status (suspended/closed) is checked as a collect-all rule below.
 	acct, err := s.resolver.Resolve(ctx, transfer.AccountID)
 	if err != nil {
 		return nil, err
@@ -81,20 +80,30 @@ func (s *Service) ApplyRules(
 	result.OmnibusAccountID = acct.OmnibusAccountID
 	result.ContributionType = applyContributionType(acct.AccountType)
 
-	// Collect-all: evaluate all three rules unconditionally.
+	// Collect-all: evaluate all four rules unconditionally.
 	var violations []RuleViolation
 
-	// Rule 1: Deposit limit
+	// Rule 1: Account eligibility — collect-all so it appears alongside other violations.
+	result.RulesApplied = append(result.RulesApplied, "account_eligibility")
+	if acct.Status != "active" {
+		violations = append(violations, RuleViolation{
+			Code:    "account_ineligible",
+			Rule:    "account_eligibility",
+			Message: fmt.Sprintf("Account is %s and cannot receive deposits.", acct.Status),
+		})
+	}
+
+	// Rule 2: Deposit limit
 	result.RulesApplied = append(result.RulesApplied, "deposit_limit")
 	if transfer.AmountCents > MaxDepositAmountCents {
 		violations = append(violations, RuleViolation{
 			Code:    "over_limit",
 			Rule:    "deposit_limit",
-			Message: fmt.Sprintf("Deposit amount $%.2f exceeds maximum limit of $%.2f", float64(transfer.AmountCents)/100, float64(MaxDepositAmountCents)/100),
+			Message: fmt.Sprintf("Deposit amount $%.2f exceeds the $%.2f per-check limit.", float64(transfer.AmountCents)/100, float64(MaxDepositAmountCents)/100),
 		})
 	}
 
-	// Rule 2: Contribution cap (retirement accounts only)
+	// Rule 3: Contribution cap (retirement accounts only)
 	result.RulesApplied = append(result.RulesApplied, "contribution_cap")
 	if err := applyContributionCap(acct.AccountType, transfer.AmountCents); err != nil {
 		violations = append(violations, RuleViolation{
@@ -104,7 +113,7 @@ func (s *Service) ApplyRules(
 		})
 	}
 
-	// Rule 3: Duplicate check (non-destructive EXISTS — only marks after all pass)
+	// Rule 4: Duplicate check (non-destructive EXISTS — only marks after all pass)
 	result.RulesApplied = append(result.RulesApplied, "duplicate_check")
 	if vendorResp.MICRData != nil {
 		if checkDuplicateExists(ctx, s.rdb,

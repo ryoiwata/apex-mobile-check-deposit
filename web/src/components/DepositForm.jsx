@@ -1,25 +1,21 @@
 import { useState } from 'react'
 import { api } from '../api.js'
+import { ACCOUNTS } from '../accounts.js'
 
-const ACCOUNTS = [
-  { id: 'ACC-SOFI-1006', label: 'ACC-SOFI-1006 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1001', label: 'ACC-SOFI-1001 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1002', label: 'ACC-SOFI-1002 — SoFi Joint Brokerage' },
-  { id: 'ACC-SOFI-1003', label: 'ACC-SOFI-1003 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1004', label: 'ACC-SOFI-1004 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-1005', label: 'ACC-SOFI-1005 — SoFi Individual Brokerage' },
-  { id: 'ACC-SOFI-0000', label: 'ACC-SOFI-0000 — SoFi Demo Account' },
-  { id: 'ACC-RETIRE-001', label: 'ACC-RETIRE-001 — SoFi Traditional IRA' },
+const TIME_SCENARIOS = [
+  { value: '',              label: 'Now (actual current time)',                        description: '' },
+  { value: 'before_cutoff', label: 'Before cutoff — today 3:00 PM CT',               description: 'Deposit timestamp set to 3:00 PM CT — included in today\'s settlement batch' },
+  { value: 'after_cutoff',  label: 'After cutoff — today 7:15 PM CT',                description: 'Deposit timestamp set to 7:15 PM CT — rolls to next business day\'s batch' },
 ]
 
 const SCENARIOS = [
+  { code: 'AMOUNT_MISMATCH',    label: 'Amount Mismatch',      description: 'OCR amount differs from entered amount, flags for review' },
   { code: 'CLEAN_PASS',         label: 'Clean Pass',           description: 'All checks pass, MICR data extracted (Happy Path)' },
+  { code: 'DUPLICATE_DETECTED', label: 'Duplicate Detected',   description: 'Check previously deposited, reject' },
   { code: 'IQA_FAIL_BLUR',      label: 'IQA Fail — Blur',      description: 'Image too blurry, prompt retake' },
   { code: 'IQA_FAIL_GLARE',     label: 'IQA Fail — Glare',     description: 'Glare detected, prompt retake' },
-  { code: 'MICR_READ_FAILURE',  label: 'MICR Read Failure',    description: 'Cannot read MICR line, flags for operator review' },
-  { code: 'DUPLICATE_DETECTED', label: 'Duplicate Detected',   description: 'Check previously deposited, reject' },
-  { code: 'AMOUNT_MISMATCH',    label: 'Amount Mismatch',      description: 'OCR amount differs from entered amount, flags for review' },
   { code: 'IQA_PASS',           label: 'IQA Pass (basic)',     description: 'Image quality acceptable, proceed normally' },
+  { code: 'MICR_READ_FAILURE',  label: 'MICR Read Failure',    description: 'Cannot read MICR line, flags for operator review' },
 ]
 
 const STATUS_STYLES = {
@@ -41,12 +37,13 @@ const STATUS_MESSAGES = {
 }
 
 /**
- * @param {{ onSuccess: (transferId: string) => void, initialAccountId?: string }} props
+ * @param {{ accountId: string, onSuccess: (transferId: string) => void, onSwitchAccount?: () => void }} props
  */
-export default function DepositForm({ onSuccess, initialAccountId }) {
-  const [accountId, setAccountId] = useState(initialAccountId || 'ACC-SOFI-1006')
+export default function DepositForm({ accountId, onSuccess, onSwitchAccount }) {
   const [scenario, setScenario] = useState('CLEAN_PASS')
+  const [createdAtOverride, setCreatedAtOverride] = useState('')
   const [amountDollars, setAmountDollars] = useState('100.00')
+  const [ocrAmountDollars, setOcrAmountDollars] = useState('')
   const [frontFile, setFrontFile] = useState(null)
   const [backFile, setBackFile] = useState(null)
   const [cameraMode, setCameraMode] = useState(false)
@@ -59,6 +56,38 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
   const [violations, setViolations] = useState(null)
   // Re-auth prompt
   const [needsReauth, setNeedsReauth] = useState(false)
+  // Amount field inline validation
+  const [amountError, setAmountError] = useState(null)
+  const [amountTouched, setAmountTouched] = useState(false)
+  // Account field inline validation (backend errors only — selection is global)
+  const [accountError, setAccountError] = useState(null)
+  // General violations that don't map to a specific field
+  const [generalViolations, setGeneralViolations] = useState([])
+
+  const DEPOSIT_LIMIT = 5000
+
+  function validateAmount(value) {
+    const num = parseFloat(value)
+    if (!value || isNaN(num) || num <= 0) return 'Please enter a valid deposit amount.'
+    if (num > DEPOSIT_LIMIT) return `Deposits are limited to $${DEPOSIT_LIMIT.toLocaleString('en-US', { minimumFractionDigits: 2 })} per check.`
+    return null
+  }
+
+  function handleAmountChange(e) {
+    setAmountDollars(e.target.value)
+    if (amountTouched) setAmountError(validateAmount(e.target.value))
+  }
+
+  function handleAmountBlur() {
+    setAmountTouched(true)
+    setAmountError(validateAmount(amountDollars))
+  }
+
+  const selectedAccount = ACCOUNTS.find(a => a.id === accountId)
+  const isAccountIneligible = selectedAccount?.status === 'suspended' || selectedAccount?.status === 'closed'
+  const accountWarning = isAccountIneligible ? selectedAccount?.status : null
+  const isAmountValid = !validateAmount(amountDollars)
+  const canSubmit = isAmountValid && !isAccountIneligible && !loading
 
   function resetImageState() {
     setFrontFile(null)
@@ -79,6 +108,9 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     setIqaError(null)
     setViolations(null)
     setNeedsReauth(false)
+    setAmountError(null)
+    setAccountError(null)
+    setGeneralViolations([])
 
     const amountCents = Math.round(parseFloat(amountDollars) * 100)
     if (isNaN(amountCents) || amountCents <= 0) {
@@ -100,6 +132,15 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
     formData.append('vendor_scenario', scenario)
     formData.append('front_image', front)
     formData.append('back_image', back)
+    if (scenario === 'AMOUNT_MISMATCH' && ocrAmountDollars) {
+      const ocrCents = Math.round(parseFloat(ocrAmountDollars) * 100)
+      if (!isNaN(ocrCents) && ocrCents > 0) {
+        formData.append('simulated_ocr_amount_cents', String(ocrCents))
+      }
+    }
+    if (createdAtOverride) {
+      formData.append('created_at_override', createdAtOverride)
+    }
 
     setLoading(true)
     try {
@@ -115,14 +156,31 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
       }
       setResult(transfer)
     } catch (err) {
-      // 401 → session expired
-      if (err?.error === 'session_expired' || (typeof err === 'object' && err?.action === 're_authenticate')) {
+      // 401 → session expired or missing token
+      if (err?.action === 're_authenticate' || err?.action === 'authenticate') {
         setNeedsReauth(true)
         return
       }
-      // 422 collect-all violations
+      // 422 account_not_found → inline error on account dropdown
+      if (err?.error === 'account_not_found') {
+        setAccountError(err.message || 'Account does not exist. Please select a valid account.')
+        return
+      }
+      // 422 collect-all violations — map each to its field
       if (err?.violations) {
         setViolations(err.violations)
+        const general = []
+        err.violations.forEach(v => {
+          if (v.code === 'over_limit') {
+            setAmountTouched(true)
+            setAmountError(v.message || 'Deposits are limited to $5,000.00 per check.')
+          } else if (v.code === 'account_ineligible') {
+            setAccountError(v.message)
+          } else {
+            general.push(v)
+          }
+        })
+        setGeneralViolations(general)
         return
       }
       setError(err?.error || 'Submission failed. Is the backend running?')
@@ -209,96 +267,192 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
         </p>
         <select
           value={scenario}
-          onChange={e => setScenario(e.target.value)}
+          onChange={e => { setScenario(e.target.value); setOcrAmountDollars('') }}
           className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
         >
           {SCENARIOS.map(s => (
             <option key={s.code} value={s.code}>{s.label} — {s.description}</option>
           ))}
         </select>
+        {scenario === 'AMOUNT_MISMATCH' && (
+          <div className="mt-3 pt-3 border-t border-amber-200">
+            <label className="block text-xs font-semibold text-amber-800 mb-1">
+              Simulated OCR Amount ($) <span className="font-normal text-amber-700">— what the stub will "read" from the check</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder={`e.g. ${amountDollars ? (parseFloat(amountDollars) * 0.8).toFixed(2) : '80.00'} (leave blank for auto 80% of entered)`}
+              value={ocrAmountDollars}
+              onChange={e => setOcrAmountDollars(e.target.value)}
+              className="w-full border border-amber-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+            {ocrAmountDollars && amountDollars && parseFloat(ocrAmountDollars) === parseFloat(amountDollars) && (
+              <p className="mt-1 text-xs text-amber-700">⚠ OCR amount matches entered amount — no mismatch will be created. Enter a different value.</p>
+            )}
+            <p className="mt-1 text-xs text-amber-600">
+              The operator will see this as the OCR-recognized amount vs. {amountDollars ? `$${parseFloat(amountDollars).toFixed(2)}` : 'the entered amount'} investor-entered.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Deposit Time Override — demo control for EOD cutoff testing */}
+      <div className="mb-5 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+        <p className="text-xs font-semibold text-orange-800 uppercase tracking-wide mb-1">
+          Deposit Time — Test Scenario
+        </p>
+        <p className="text-xs text-orange-700 mb-3">
+          Override deposit timestamp to test EOD cutoff behavior. Cutoff is 6:30 PM CT.
+        </p>
+        <select
+          value={createdAtOverride}
+          onChange={e => setCreatedAtOverride(e.target.value)}
+          className="w-full border border-orange-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+        >
+          {TIME_SCENARIOS.map(s => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+        {createdAtOverride && TIME_SCENARIOS.find(s => s.value === createdAtOverride)?.description && (
+          <p className="mt-2 text-xs text-orange-600">
+            {TIME_SCENARIOS.find(s => s.value === createdAtOverride).description}
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
-          <select
-            value={accountId}
-            onChange={e => setAccountId(e.target.value)}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            {ACCOUNTS.map(a => (
-              <option key={a.id} value={a.id}>{a.label}</option>
-            ))}
-          </select>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-sm font-medium text-gray-700">Depositing to</label>
+            {onSwitchAccount && (
+              <button
+                type="button"
+                onClick={onSwitchAccount}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                Switch account ↑
+              </button>
+            )}
+          </div>
+          <div className={`px-3 py-2 rounded border text-sm ${accountWarning ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+            <span className="font-mono font-medium text-gray-800">{accountId}</span>
+            {selectedAccount && (
+              <span className="ml-2 text-gray-500">— {selectedAccount.label}</span>
+            )}
+          </div>
+          {accountWarning && (
+            <div className="mt-1.5 flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+              <span className="shrink-0 text-sm">⚠️</span>
+              <div>
+                <strong className="block mb-0.5">
+                  {accountWarning === 'closed' ? 'Account Closed' : 'Account Suspended'}
+                </strong>
+                {accountWarning === 'closed'
+                  ? 'This account is permanently closed and cannot receive deposits. Use the account switcher above to select a different account.'
+                  : 'This account is currently suspended and cannot receive deposits. Use the account switcher above to select a different account.'}
+              </div>
+            </div>
+          )}
+          {accountError && (
+            <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1">
+              <span>⚠</span> {accountError}
+            </p>
+          )}
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0.01"
-            max="5000.00"
-            value={amountDollars}
-            onChange={e => setAmountDollars(e.target.value)}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
-          <span className="text-sm font-medium text-gray-700">Image source:</span>
-          <button
-            type="button"
-            onClick={() => setCameraMode(false)}
-            className={`px-3 py-1.5 rounded text-sm font-medium ${!cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-          >
-            📁 Upload File
-          </button>
-          <button
-            type="button"
-            onClick={() => setCameraMode(true)}
-            className={`px-3 py-1.5 rounded text-sm font-medium ${cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-          >
-            📷 Take Photo
-          </button>
-        </div>
-        <p className="text-xs text-gray-500 -mt-3">
-          {cameraMode ? "Opens your phone's rear camera directly" : 'Select an image file from your device'}
-        </p>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Front of Check <span className="text-gray-400 font-normal">(optional — placeholder used if omitted)</span>
-          </label>
-          <input
-            type="file"
-            accept="image/*"
-            {...(cameraMode ? { capture: 'environment' } : {})}
-            onChange={e => setFrontFile(e.target.files[0] || null)}
-            className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Back of Check <span className="text-gray-400 font-normal">(optional)</span>
-          </label>
-          <input
-            type="file"
-            accept="image/*"
-            {...(cameraMode ? { capture: 'environment' } : {})}
-            onChange={e => setBackFile(e.target.files[0] || null)}
-            className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-700 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+        <div
+          style={{
+            opacity: isAccountIneligible ? 0.45 : 1,
+            pointerEvents: isAccountIneligible ? 'none' : 'auto',
+            transition: 'opacity 0.2s ease',
+          }}
+          className="space-y-4"
         >
-          {loading ? 'Submitting…' : 'Submit Deposit'}
-        </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
+            <p className="text-xs text-gray-400 mb-1.5">Single deposits are limited to $5,000.00 per check.</p>
+            <input
+              type="number"
+              step="0.01"
+              value={amountDollars}
+              onChange={handleAmountChange}
+              onBlur={handleAmountBlur}
+              disabled={isAccountIneligible}
+              className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 ${amountError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'}`}
+            />
+            {amountError && (
+              <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1" style={{ transition: 'opacity 0.2s' }}>
+                <span>⚠</span> {amountError}
+              </p>
+            )}
+            {!amountError && amountTouched && isAmountValid && (
+              <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
+                <span>✓</span> Amount within deposit limits
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+            <span className="text-sm font-medium text-gray-700">Image source:</span>
+            <button
+              type="button"
+              disabled={isAccountIneligible}
+              onClick={() => setCameraMode(false)}
+              className={`px-3 py-1.5 rounded text-sm font-medium ${!cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+            >
+              📁 Upload File
+            </button>
+            <button
+              type="button"
+              disabled={isAccountIneligible}
+              onClick={() => setCameraMode(true)}
+              className={`px-3 py-1.5 rounded text-sm font-medium ${cameraMode ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
+            >
+              📷 Take Photo
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 -mt-3">
+            {cameraMode ? "Opens your phone's rear camera directly" : 'Select an image file from your device'}
+          </p>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Front of Check <span className="text-gray-400 font-normal">(optional — placeholder used if omitted)</span>
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={isAccountIneligible}
+              {...(cameraMode ? { capture: 'environment' } : {})}
+              onChange={e => setFrontFile(e.target.files[0] || null)}
+              className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Back of Check <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={isAccountIneligible}
+              {...(cameraMode ? { capture: 'environment' } : {})}
+              onChange={e => setBackFile(e.target.files[0] || null)}
+              className="w-full text-sm text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full bg-blue-700 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Submitting…' : 'Submit Deposit'}
+          </button>
+        </div>
       </form>
 
       {error && (
@@ -307,13 +461,13 @@ export default function DepositForm({ onSuccess, initialAccountId }) {
         </div>
       )}
 
-      {violations && (
+      {generalViolations.length > 0 && (
         <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded space-y-2">
-          <p className="text-sm font-semibold text-red-800">Deposit could not be processed — please fix all issues:</p>
+          <p className="text-sm font-semibold text-red-800">Deposit could not be processed:</p>
           <ul className="space-y-1">
-            {violations.map((v, i) => (
+            {generalViolations.map((v, i) => (
               <li key={i} className="flex items-start gap-2 text-sm text-red-700">
-                <span className="mt-0.5 text-red-400">•</span>
+                <span className="mt-0.5 text-red-400">⚠</span>
                 <span><strong>{v.rule}:</strong> {v.message}</span>
               </li>
             ))}

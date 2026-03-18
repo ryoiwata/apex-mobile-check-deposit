@@ -5,14 +5,12 @@ INSERT INTO correspondents (id, name, omnibus_account_id) VALUES
     ('CORR-CASH',  'CashApp', 'OMNI-CASH-001')
 ON CONFLICT (id) DO NOTHING;
 
--- Investor accounts — suffixes map to vendor stub scenarios
+-- Investor accounts — account type and status drive business rules;
+-- vendor stub behavior is controlled via the explicit scenario dropdown.
 INSERT INTO accounts (id, correspondent_id, account_type, status) VALUES
-    ('ACC-SOFI-1001', 'CORR-SOFI', 'individual', 'active'),  -- IQA blur
-    ('ACC-SOFI-1002', 'CORR-SOFI', 'individual', 'active'),  -- IQA glare
-    ('ACC-SOFI-1003', 'CORR-SOFI', 'individual', 'active'),  -- MICR failure
-    ('ACC-SOFI-1004', 'CORR-SOFI', 'individual', 'active'),  -- duplicate
-    ('ACC-SOFI-1005', 'CORR-SOFI', 'individual', 'active'),  -- amount mismatch
-    ('ACC-SOFI-1006', 'CORR-SOFI', 'individual', 'active'),  -- clean pass
-    ('ACC-SOFI-0000', 'CORR-SOFI', 'individual', 'active'),  -- basic pass
-    ('ACC-RETIRE-001','CORR-WBL',  'retirement', 'active')   -- contribution type test
+    ('ACC-SOFI-1001',  'CORR-SOFI', 'individual',    'active'),    -- default individual account
+    ('ACC-SOFI-1002',  'CORR-SOFI', 'joint',         'active'),    -- joint account type
+    ('ACC-RETIRE-001', 'CORR-SOFI', 'ira_traditional','active'),   -- traditional IRA (contribution type)
+    ('ACC-RETIRE-002', 'CORR-SOFI', 'ira_roth',      'active'),    -- Roth IRA (contribution type)
+    ('ACC-SUSPENDED',  'CORR-SOFI', 'individual',    'suspended')  -- suspended → account eligibility rejection
 ON CONFLICT (id) DO NOTHING;

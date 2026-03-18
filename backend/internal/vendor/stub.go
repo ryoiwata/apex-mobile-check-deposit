@@ -6,24 +6,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// Stub returns deterministic responses keyed by the last 4 chars of AccountID.
+// Stub returns deterministic responses keyed by req.Scenario.
 type Stub struct{}
 
 // NewStub creates a new vendor stub.
 func NewStub() *Stub { return &Stub{} }
 
-// Validate returns a deterministic response based on req.Scenario when set, falling
-// back to the last 4 characters of AccountID for backward compatibility with tests
-// that construct Request without a Scenario field.
+// Validate returns a deterministic response based on req.Scenario.
+// If Scenario is empty the stub defaults to clean pass.
 func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
 	txID := "VND-" + uuid.New().String()
 
-	scenario := req.Scenario
-	if scenario == "" {
-		scenario = scenarioFromSuffix(extractSuffix(req.AccountID))
-	}
-
-	switch scenario {
+	switch req.Scenario {
 	case "IQA_FAIL_BLUR":
 		return iqaFailBlur(txID), nil
 	case "IQA_FAIL_GLARE":
@@ -33,38 +27,10 @@ func (s *Stub) Validate(ctx context.Context, req *Request) (*Response, error) {
 	case "DUPLICATE_DETECTED":
 		return duplicateDetected(txID), nil
 	case "AMOUNT_MISMATCH":
-		return amountMismatch(txID, req.DeclaredAmountCents), nil
+		return amountMismatch(txID, req.DeclaredAmountCents, req.SimulatedOCRAmountCents), nil
 	default:
 		return cleanPass(txID, req.DeclaredAmountCents), nil
 	}
-}
-
-// scenarioFromSuffix maps the legacy account ID suffix to a scenario code.
-// Preserves backward compatibility for existing tests that set AccountID but not Scenario.
-func scenarioFromSuffix(suffix string) string {
-	switch suffix {
-	case "1001":
-		return "IQA_FAIL_BLUR"
-	case "1002":
-		return "IQA_FAIL_GLARE"
-	case "1003":
-		return "MICR_READ_FAILURE"
-	case "1004":
-		return "DUPLICATE_DETECTED"
-	case "1005":
-		return "AMOUNT_MISMATCH"
-	default:
-		return "CLEAN_PASS"
-	}
-}
-
-// extractSuffix returns the last 4 chars of accountID.
-// "ACC-SOFI-1003" → "1003"
-func extractSuffix(accountID string) string {
-	if len(accountID) < 4 {
-		return accountID
-	}
-	return accountID[len(accountID)-4:]
 }
 
 func iqaFailBlur(txID string) *Response {
@@ -118,9 +84,17 @@ func duplicateDetected(txID string) *Response {
 	}
 }
 
-func amountMismatch(txID string, declared int64) *Response {
-	// OCR reads a different amount than declared; flagged for operator review
-	ocr := declared + 5000 // OCR reads $50 more than declared
+func amountMismatch(txID string, declared, simulatedOCR int64) *Response {
+	// OCR reads a different amount than declared; flagged for operator review.
+	// Use the caller-provided OCR amount if given, otherwise default to 80% of declared
+	// (simulates a check where OCR reads lower than written amount).
+	ocr := simulatedOCR
+	if ocr == 0 || ocr == declared {
+		ocr = declared * 80 / 100 // ~20% lower than declared
+		if ocr == 0 {
+			ocr = declared - 100 // edge-case: very small declared amount
+		}
+	}
 	return &Response{
 		Status:         "flagged",
 		IQAResult:      "pass",

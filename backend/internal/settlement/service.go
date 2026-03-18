@@ -12,30 +12,62 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	// DefaultMaxRetries is the default maximum bank ACK retries before escalation.
+	DefaultMaxRetries = 3
+)
+
 // Batch represents a settlement batch record, mapping 1:1 to settlement_batches table.
 type Batch struct {
-	ID                      uuid.UUID `json:"batch_id"`
-	BatchDate               time.Time `json:"batch_date"`
-	FilePath                *string   `json:"file_path,omitempty"`
-	DepositCount            int       `json:"deposit_count"`
-	TotalAmountCents        int64     `json:"total_amount_cents"`
-	Status                  string    `json:"status"`
-	BankReference           *string   `json:"bank_reference,omitempty"`
-	DepositsRolledToNextDay int       `json:"deposits_rolled_to_next_day,omitempty"`
-	NextSettlementDate      *string   `json:"next_settlement_date,omitempty"`
-	CreatedAt               time.Time `json:"created_at"`
+	ID                      uuid.UUID  `json:"batch_id"`
+	BatchDate               time.Time  `json:"batch_date"`
+	FilePath                *string    `json:"file_path,omitempty"`
+	DepositCount            int        `json:"deposit_count"`
+	TotalAmountCents        int64      `json:"total_amount_cents"`
+	Status                  string     `json:"status"`
+	BankReference           *string    `json:"bank_reference,omitempty"`
+	RetryCount              int        `json:"retry_count,omitempty"`
+	LastRetryAt             *time.Time `json:"last_retry_at,omitempty"`
+	DepositsRolledToNextDay int        `json:"deposits_rolled_to_next_day,omitempty"`
+	NextSettlementDate      *string    `json:"next_settlement_date,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
 }
 
 // Service handles EOD batch settlement processing.
 type Service struct {
-	db        *sql.DB
-	machine   *state.Machine
-	outputDir string
+	db          *sql.DB
+	machine     *state.Machine
+	outputDir   string
+	bankAckMode string // "pass" (default) or "fail" (for testing)
+	maxRetries  int
 }
 
 // NewService creates a settlement Service.
 func NewService(db *sql.DB, machine *state.Machine, outputDir string) *Service {
-	return &Service{db: db, machine: machine, outputDir: outputDir}
+	return &Service{
+		db:          db,
+		machine:     machine,
+		outputDir:   outputDir,
+		bankAckMode: "pass",
+		maxRetries:  DefaultMaxRetries,
+	}
+}
+
+// SetBankAckMode configures the bank ACK stub behavior.
+// Use "pass" (default) for normal operation, "fail" to simulate ACK failures in tests.
+func (s *Service) SetBankAckMode(mode string) {
+	s.bankAckMode = mode
+}
+
+// SetMaxRetries configures how many ACK retries before escalating to operator.
+func (s *Service) SetMaxRetries(n int) {
+	s.maxRetries = n
+}
+
+// simulateBankAck returns true if the bank acknowledged the submission.
+// In production this would call the bank's ACK endpoint.
+func (s *Service) simulateBankAck() bool {
+	return s.bankAckMode != "fail"
 }
 
 // CutoffTime returns the UTC time representing 6:30 PM CT for the given date.
@@ -116,6 +148,36 @@ func nextBusinessDay(date time.Time) time.Time {
 	return next
 }
 
+// getBatch retrieves a settlement batch by ID.
+func (s *Service) getBatch(ctx context.Context, batchID uuid.UUID) (*Batch, error) {
+	var b Batch
+	var filePath, bankRef sql.NullString
+	var lastRetryAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, batch_date, file_path, deposit_count, total_amount_cents,
+		       status, bank_reference, retry_count, last_retry_at, created_at
+		FROM settlement_batches WHERE id = $1`, batchID).Scan(
+		&b.ID, &b.BatchDate, &filePath, &b.DepositCount, &b.TotalAmountCents,
+		&b.Status, &bankRef, &b.RetryCount, &lastRetryAt, &b.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("settlement: batch %s not found", batchID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("settlement: getting batch %s: %w", batchID, err)
+	}
+	if filePath.Valid {
+		b.FilePath = &filePath.String
+	}
+	if bankRef.Valid {
+		b.BankReference = &bankRef.String
+	}
+	if lastRetryAt.Valid {
+		b.LastRetryAt = &lastRetryAt.Time
+	}
+	return &b, nil
+}
+
 // RunSettlement executes the EOD batch settlement for the given date.
 //
 // Processing order:
@@ -126,6 +188,7 @@ func nextBusinessDay(date time.Time) time.Time {
 //  5. Generate settlement file BEFORE any state transitions — safe to retry on failure
 //  6. For each transfer: open tx, transition FundsPosted→Completed, set settlement_batch_id, commit
 //  7. Update batch record with final counts and mark 'submitted'
+//  8. Simulate bank ACK — if acknowledged, mark 'acknowledged'; if not, mark 'retry_pending'
 func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batch, error) {
 	cutoff := CutoffTime(batchDate)
 	now := time.Now().UTC()
@@ -185,7 +248,7 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 	// Generate the settlement file FIRST — before any state changes.
 	// If generation fails, the batch record stays pending but no transfers
 	// have moved state, so the entire run is safe to retry.
-	filePath, err := Generate(transfers, s.outputDir, batchDate)
+	filePath, err := GenerateWithID(transfers, s.outputDir, batchDate, batch.ID)
 	if err != nil {
 		return nil, fmt.Errorf("settlement: generating settlement file: %w", err)
 	}
@@ -227,11 +290,9 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 		completed++
 	}
 
-	// Update the batch record with final results.
 	batch.DepositCount = completed
 	batch.TotalAmountCents = totalCents
 	batch.FilePath = &filePath
-	batch.Status = "submitted"
 	batch.DepositsRolledToNextDay = rolledCount
 	if rolledCount > 0 {
 		nextDay := nextBusinessDay(batchDate)
@@ -239,14 +300,303 @@ func (s *Service) RunSettlement(ctx context.Context, batchDate time.Time) (*Batc
 		batch.NextSettlementDate = &nextDayStr
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE settlement_batches
-		SET file_path = $1, deposit_count = $2, total_amount_cents = $3, status = 'submitted'
-		WHERE id = $4`,
-		filePath, completed, totalCents, batch.ID,
-	); err != nil {
-		return nil, fmt.Errorf("settlement: updating batch record: %w", err)
+	// Simulate bank ACK. If acknowledged, mark the batch submitted/acknowledged.
+	// If not acknowledged, mark retry_pending with retry_count=1.
+	if s.simulateBankAck() {
+		batch.Status = "submitted"
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET file_path = $1, deposit_count = $2, total_amount_cents = $3, status = 'submitted'
+			WHERE id = $4`,
+			filePath, completed, totalCents, batch.ID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch record: %w", err)
+		}
+	} else {
+		// Bank did not acknowledge — mark as retry_pending
+		batch.Status = "retry_pending"
+		batch.RetryCount = 1
+		now := time.Now().UTC()
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET file_path = $1, deposit_count = $2, total_amount_cents = $3,
+			    status = 'retry_pending', retry_count = 1, last_retry_at = NOW()
+			WHERE id = $4`,
+			filePath, completed, totalCents, batch.ID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch record (retry_pending): %w", err)
+		}
 	}
 
 	return batch, nil
+}
+
+// RetryBatch re-attempts bank submission for a batch in retry_pending state.
+// Increments retry_count on each attempt. After maxRetries failures, escalates to operator.
+func (s *Service) RetryBatch(ctx context.Context, batchID uuid.UUID) (*Batch, error) {
+	batch, err := s.getBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	if batch.Status != "retry_pending" {
+		return nil, fmt.Errorf("settlement: batch %s is not in retry_pending state (current: %s)", batchID, batch.Status)
+	}
+
+	newRetryCount := batch.RetryCount + 1
+	now := time.Now().UTC()
+
+	if s.simulateBankAck() {
+		// Bank acknowledged — mark as submitted
+		batch.Status = "submitted"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET status = 'submitted', retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating batch after successful retry: %w", err)
+		}
+	} else if newRetryCount >= s.maxRetries {
+		// Max retries exceeded — escalate to operator
+		batch.Status = "escalated"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET status = 'escalated', retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: escalating batch: %w", err)
+		}
+	} else {
+		// Still failing — stay in retry_pending with incremented count
+		batch.Status = "retry_pending"
+		batch.RetryCount = newRetryCount
+		batch.LastRetryAt = &now
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE settlement_batches
+			SET retry_count = $1, last_retry_at = NOW()
+			WHERE id = $2`,
+			newRetryCount, batchID,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: updating retry count: %w", err)
+		}
+	}
+
+	return batch, nil
+}
+
+// BatchDetail extends Batch with the list of deposits included in the batch.
+type BatchDetail struct {
+	*Batch
+	Deposits []*models.Transfer `json:"deposits"`
+}
+
+// EODStatus describes the current settlement window.
+type EODStatus struct {
+	CurrentTime          time.Time `json:"current_time"`
+	CutoffTime           time.Time `json:"cutoff_time"`
+	PastCutoff           bool      `json:"past_cutoff"`
+	PendingDepositCount  int       `json:"pending_deposit_count"`
+	PendingAmountCents   int64     `json:"pending_amount_cents"`
+	InBatchCount         int       `json:"in_batch_count"`
+	InBatchAmountCents   int64     `json:"in_batch_amount_cents"`
+	RolledCount          int       `json:"rolled_count"`
+	RolledAmountCents    int64     `json:"rolled_amount_cents"`
+}
+
+// ListBatches returns all settlement batches ordered newest first.
+func (s *Service) ListBatches(ctx context.Context) ([]Batch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, batch_date, file_path, deposit_count, total_amount_cents,
+		       status, bank_reference, retry_count, last_retry_at, created_at
+		FROM settlement_batches
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: listing batches: %w", err)
+	}
+	defer rows.Close()
+
+	var batches []Batch
+	for rows.Next() {
+		var b Batch
+		var filePath, bankRef sql.NullString
+		var lastRetryAt sql.NullTime
+		if err := rows.Scan(
+			&b.ID, &b.BatchDate, &filePath, &b.DepositCount, &b.TotalAmountCents,
+			&b.Status, &bankRef, &b.RetryCount, &lastRetryAt, &b.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: scanning batch row: %w", err)
+		}
+		if filePath.Valid {
+			b.FilePath = &filePath.String
+		}
+		if bankRef.Valid {
+			b.BankReference = &bankRef.String
+		}
+		if lastRetryAt.Valid {
+			b.LastRetryAt = &lastRetryAt.Time
+		}
+		batches = append(batches, b)
+	}
+	return batches, rows.Err()
+}
+
+// GetBatchWithDeposits returns a batch and the transfers assigned to it.
+func (s *Service) GetBatchWithDeposits(ctx context.Context, batchID uuid.UUID) (*BatchDetail, error) {
+	batch, err := s.getBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, account_id, amount_cents, declared_amount_cents, status, flagged,
+		       flag_reason, contribution_type, vendor_transaction_id, micr_routing,
+		       micr_account, micr_serial, micr_confidence, ocr_amount_cents,
+		       front_image_ref, back_image_ref, settlement_batch_id, return_reason,
+		       created_at, updated_at
+		FROM transfers
+		WHERE settlement_batch_id = $1
+		ORDER BY created_at ASC`, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying batch deposits: %w", err)
+	}
+	defer rows.Close()
+
+	var deposits []*models.Transfer
+	for rows.Next() {
+		var t models.Transfer
+		var settlementBatchIDStr sql.NullString
+		if err := rows.Scan(
+			&t.ID, &t.AccountID, &t.AmountCents, &t.DeclaredAmountCents,
+			&t.Status, &t.Flagged, &t.FlagReason, &t.ContributionType,
+			&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
+			&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
+			&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
+			&t.ReturnReason, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("settlement: scanning deposit row: %w", err)
+		}
+		if settlementBatchIDStr.Valid {
+			id, _ := uuid.Parse(settlementBatchIDStr.String)
+			t.SettlementBatchID = &id
+		}
+		deposits = append(deposits, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if deposits == nil {
+		deposits = []*models.Transfer{}
+	}
+
+	return &BatchDetail{Batch: batch, Deposits: deposits}, nil
+}
+
+// SettlementPreview describes which FundsPosted deposits will be included in the
+// next settlement batch vs. rolled to the next business day.
+type SettlementPreview struct {
+	CutoffTime       time.Time        `json:"cutoff_time"`
+	IncludedDeposits []DepositSummary `json:"included_deposits"`
+	RolledDeposits   []DepositSummary `json:"rolled_deposits"`
+	IncludedTotal    int64            `json:"included_total"`
+	RolledTotal      int64            `json:"rolled_total"`
+}
+
+// DepositSummary is a lightweight transfer view used in preview responses.
+type DepositSummary struct {
+	TransferID     string    `json:"transfer_id"`
+	AccountID      string    `json:"account_id"`
+	AmountCents    int64     `json:"amount_cents"`
+	CreatedAt      time.Time `json:"created_at"`
+	IsBeforeCutoff bool      `json:"is_before_cutoff"`
+}
+
+// GetSettlementPreview returns all FundsPosted deposits (not yet batched) categorized
+// by whether they fall before or after today's 6:30 PM CT cutoff.
+func (s *Service) GetSettlementPreview(ctx context.Context) (*SettlementPreview, error) {
+	cutoff := CutoffTime(time.Now().UTC())
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, account_id, amount_cents, created_at
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL
+		ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying preview deposits: %w", err)
+	}
+	defer rows.Close()
+
+	preview := &SettlementPreview{
+		CutoffTime:       cutoff,
+		IncludedDeposits: []DepositSummary{},
+		RolledDeposits:   []DepositSummary{},
+	}
+
+	for rows.Next() {
+		var id uuid.UUID
+		var d DepositSummary
+		if err := rows.Scan(&id, &d.AccountID, &d.AmountCents, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("settlement: scanning preview row: %w", err)
+		}
+		d.TransferID = id.String()
+		d.IsBeforeCutoff = !d.CreatedAt.After(cutoff)
+
+		if d.IsBeforeCutoff {
+			preview.IncludedDeposits = append(preview.IncludedDeposits, d)
+			preview.IncludedTotal += d.AmountCents
+		} else {
+			preview.RolledDeposits = append(preview.RolledDeposits, d)
+			preview.RolledTotal += d.AmountCents
+		}
+	}
+	return preview, rows.Err()
+}
+
+// GetEODStatus returns the current cutoff state and count of deposits awaiting settlement.
+func (s *Service) GetEODStatus(ctx context.Context) (*EODStatus, error) {
+	now := time.Now().UTC()
+	cutoff := CutoffTime(now)
+
+	var totalCount int
+	var totalCents int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_cents),0)
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL`).
+		Scan(&totalCount, &totalCents)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying pending deposits: %w", err)
+	}
+
+	var inBatchCount int
+	var inBatchCents int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_cents),0)
+		FROM transfers
+		WHERE status = 'funds_posted' AND settlement_batch_id IS NULL AND created_at <= $1`,
+		cutoff).Scan(&inBatchCount, &inBatchCents)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: querying in-batch deposits: %w", err)
+	}
+
+	rolledCount := totalCount - inBatchCount
+	rolledCents := totalCents - inBatchCents
+
+	return &EODStatus{
+		CurrentTime:         now,
+		CutoffTime:          cutoff,
+		PastCutoff:          now.After(cutoff),
+		PendingDepositCount: totalCount,
+		PendingAmountCents:  totalCents,
+		InBatchCount:        inBatchCount,
+		InBatchAmountCents:  inBatchCents,
+		RolledCount:         rolledCount,
+		RolledAmountCents:   rolledCents,
+	}, nil
 }

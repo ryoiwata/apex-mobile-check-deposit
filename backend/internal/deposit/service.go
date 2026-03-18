@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/apex/mcd/internal/funding"
 	"github.com/apex/mcd/internal/ledger"
 	"github.com/apex/mcd/internal/models"
+	"github.com/apex/mcd/internal/notification"
 	"github.com/apex/mcd/internal/state"
 	"github.com/apex/mcd/internal/vendor"
 	"github.com/google/uuid"
@@ -21,7 +23,7 @@ const transferSelectCols = `
 	flag_reason, contribution_type, vendor_transaction_id, micr_routing,
 	micr_account, micr_serial, micr_confidence, ocr_amount_cents,
 	front_image_ref, back_image_ref, settlement_batch_id, return_reason,
-	created_at, updated_at`
+	rejection_reason, verified_amount_cents, created_at, updated_at`
 
 // SubmitRequest contains all data from the multipart form, prepared by the handler.
 type SubmitRequest struct {
@@ -34,6 +36,36 @@ type SubmitRequest struct {
 	// VendorScenario explicitly controls which stub response is returned.
 	// If empty, the stub falls back to the account ID suffix. Defaults to CLEAN_PASS.
 	VendorScenario string
+	// SimulatedOCRAmountCents is passed to the vendor stub for AMOUNT_MISMATCH scenarios
+	// so the evaluator can configure the exact OCR reading. Zero means use stub default.
+	SimulatedOCRAmountCents int64
+	// CreatedAtOverride is a demo-only field for overriding the deposit timestamp to test
+	// EOD cutoff behavior. Accepted values: "before_cutoff", "after_cutoff".
+	// Empty string means use actual current time.
+	CreatedAtOverride string
+}
+
+// resolveCreatedAt returns the deposit timestamp to use based on the demo override.
+//
+//	"before_cutoff" → today 3:00 PM CT  (before the 6:30 PM cutoff)
+//	"after_cutoff"  → today 7:15 PM CT  (after the 6:30 PM cutoff, rolls to next day)
+//	""              → actual current time
+func resolveCreatedAt(override string) time.Time {
+	ct, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		ct = time.UTC
+	}
+	now := time.Now().In(ct)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ct)
+
+	switch override {
+	case "before_cutoff":
+		return today.Add(15 * time.Hour) // 3:00 PM CT
+	case "after_cutoff":
+		return today.Add(19*time.Hour + 15*time.Minute) // 7:15 PM CT
+	default:
+		return now
+	}
 }
 
 // Service orchestrates the full deposit pipeline.
@@ -66,7 +98,7 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 		FrontImageRef:       &req.FrontImageRef,
 		BackImageRef:        &req.BackImageRef,
 	}
-	if err := s.createTransfer(ctx, transfer); err != nil {
+	if err := s.createTransfer(ctx, transfer, resolveCreatedAt(req.CreatedAtOverride)); err != nil {
 		return nil, err
 	}
 
@@ -87,12 +119,13 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 
 	// 3. Call vendor stub
 	vendorReq := &vendor.Request{
-		TransferID:          transfer.ID.String(),
-		AccountID:           transfer.AccountID,
-		FrontImageRef:       req.FrontImageRef,
-		BackImageRef:        req.BackImageRef,
-		DeclaredAmountCents: transfer.DeclaredAmountCents,
-		Scenario:            req.VendorScenario,
+		TransferID:              transfer.ID.String(),
+		AccountID:               transfer.AccountID,
+		FrontImageRef:           req.FrontImageRef,
+		BackImageRef:            req.BackImageRef,
+		DeclaredAmountCents:     transfer.DeclaredAmountCents,
+		Scenario:                req.VendorScenario,
+		SimulatedOCRAmountCents: req.SimulatedOCRAmountCents,
 	}
 	vendorResp, err := s.vendor.Validate(ctx, vendorReq)
 	if err != nil {
@@ -102,13 +135,31 @@ func (s *Service) Submit(ctx context.Context, req *SubmitRequest) (*models.Trans
 	// 4. Store vendor result on transfer
 	s.updateTransferVendorData(ctx, transfer, vendorResp)
 
-	// 5. Handle vendor failure — populate retake guidance for IQA failures
+	// 5. Handle vendor failure — store rejection reason for IQA/duplicate failures
 	if vendorResp.Status == "fail" {
+		// Determine human-readable rejection reason to store on the transfer.
+		rejectionReason := ""
+		if vendorResp.RetakeGuidance != "" {
+			rejectionReason = vendorResp.RetakeGuidance
+		} else if vendorResp.ErrorMessage != nil && *vendorResp.ErrorMessage != "" {
+			rejectionReason = *vendorResp.ErrorMessage
+		} else if vendorResp.ErrorCode != nil {
+			rejectionReason = *vendorResp.ErrorCode
+		}
+
 		tx, _ := s.machine.BeginAndTransition(ctx, transfer.ID,
 			models.StatusValidating, models.StatusRejected, "system",
 			map[string]any{"vendor_error": vendorResp.ErrorCode})
+		if rejectionReason != "" {
+			tx.ExecContext(ctx,
+				`UPDATE transfers SET rejection_reason=$1, updated_at=NOW() WHERE id=$2`,
+				rejectionReason, transfer.ID)
+		}
 		tx.Commit()
 		transfer.Status = models.StatusRejected
+		if rejectionReason != "" {
+			transfer.RejectionReason = &rejectionReason
+		}
 		if vendorResp.RetakeGuidance != "" {
 			transfer.RetakeGuidance = &vendorResp.RetakeGuidance
 		}
@@ -344,15 +395,17 @@ func (s *Service) ProcessReturn(ctx context.Context, transferID uuid.UUID,
 }
 
 // createTransfer inserts a new transfer row in Requested state.
-func (s *Service) createTransfer(ctx context.Context, t *models.Transfer) error {
+// createdAt is passed explicitly so demo time overrides take effect.
+func (s *Service) createTransfer(ctx context.Context, t *models.Transfer, createdAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO transfers (id, account_id, amount_cents, declared_amount_cents, status, front_image_ref, back_image_ref)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO transfers (id, account_id, amount_cents, declared_amount_cents, status, front_image_ref, back_image_ref, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
 		t.ID, t.AccountID, t.AmountCents, t.DeclaredAmountCents,
-		string(t.Status), t.FrontImageRef, t.BackImageRef)
+		string(t.Status), t.FrontImageRef, t.BackImageRef, createdAt.UTC())
 	if err != nil {
 		return fmt.Errorf("deposit: creating transfer: %w", err)
 	}
+	t.CreatedAt = createdAt.UTC()
 	return nil
 }
 
@@ -449,7 +502,7 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		&t.VendorTransactionID, &t.MICRRouting, &t.MICRAccount,
 		&t.MICRSerial, &t.MICRConfidence, &t.OCRAmountCents,
 		&t.FrontImageRef, &t.BackImageRef, &settlementBatchIDStr,
-		&t.ReturnReason, &t.CreatedAt, &t.UpdatedAt,
+		&t.ReturnReason, &t.RejectionReason, &t.VerifiedAmountCents, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -459,4 +512,119 @@ func scanTransfer(scanFn func(dest ...any) error) (*models.Transfer, error) {
 		t.SettlementBatchID = &id
 	}
 	return &t, nil
+}
+
+// TraceAuditEntry is an audit log entry within a deposit trace.
+type TraceAuditEntry struct {
+	ID         string         `json:"id"`
+	OperatorID string         `json:"operator_id"`
+	Action     string         `json:"action"`
+	Notes      string         `json:"notes"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// TraceLedgerEntry is a ledger entry within a deposit trace.
+type TraceLedgerEntry struct {
+	ID            string    `json:"id"`
+	SubType       string    `json:"sub_type"`
+	AmountCents   int64     `json:"amount_cents"`
+	FromAccountID string    `json:"from_account_id"`
+	ToAccountID   string    `json:"to_account_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// Trace is the full lifecycle record for a single deposit.
+type Trace struct {
+	Transfer         *models.Transfer             `json:"transfer"`
+	StateTransitions []models.StateTransition     `json:"state_transitions"`
+	AuditLogs        []TraceAuditEntry            `json:"audit_logs"`
+	LedgerEntries    []TraceLedgerEntry           `json:"ledger_entries"`
+	Notifications    []notification.Notification  `json:"notifications"`
+}
+
+// GetTrace assembles the full lifecycle trace for a transfer.
+func (s *Service) GetTrace(ctx context.Context, transferID uuid.UUID) (*Trace, error) {
+	transfer, stateHistory, err := s.GetByID(ctx, transferID)
+	if err != nil {
+		return nil, err
+	}
+	if stateHistory == nil {
+		stateHistory = []models.StateTransition{}
+	}
+
+	// Audit logs
+	auditRows, err := s.db.QueryContext(ctx, `
+		SELECT id, operator_id, action, notes, metadata, created_at
+		FROM audit_logs WHERE transfer_id = $1 ORDER BY created_at ASC`, transferID)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace audit logs for %s: %w", transferID, err)
+	}
+	defer auditRows.Close()
+
+	var auditLogs []TraceAuditEntry
+	for auditRows.Next() {
+		var e TraceAuditEntry
+		var metaRaw []byte
+		if err := auditRows.Scan(&e.ID, &e.OperatorID, &e.Action, &e.Notes, &metaRaw, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("deposit: scanning audit row: %w", err)
+		}
+		if metaRaw != nil {
+			_ = json.Unmarshal(metaRaw, &e.Metadata)
+		}
+		auditLogs = append(auditLogs, e)
+	}
+	if auditLogs == nil {
+		auditLogs = []TraceAuditEntry{}
+	}
+
+	// Ledger entries
+	ledgerRows, err := s.db.QueryContext(ctx, `
+		SELECT id, sub_type, amount_cents, from_account_id, to_account_id, created_at
+		FROM ledger_entries WHERE transfer_id = $1 ORDER BY created_at ASC`, transferID)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace ledger entries for %s: %w", transferID, err)
+	}
+	defer ledgerRows.Close()
+
+	var ledgerEntries []TraceLedgerEntry
+	for ledgerRows.Next() {
+		var e TraceLedgerEntry
+		if err := ledgerRows.Scan(&e.ID, &e.SubType, &e.AmountCents, &e.FromAccountID, &e.ToAccountID, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("deposit: scanning ledger row: %w", err)
+		}
+		ledgerEntries = append(ledgerEntries, e)
+	}
+	if ledgerEntries == nil {
+		ledgerEntries = []TraceLedgerEntry{}
+	}
+
+	// Notifications
+	notifRepo := notification.NewRepo(s.db)
+	allNotifs, err := notifRepo.GetByAccount(ctx, transfer.AccountID, false)
+	if err != nil {
+		return nil, fmt.Errorf("deposit: trace notifications for %s: %w", transferID, err)
+	}
+	var notifs []notification.Notification
+	for _, n := range allNotifs {
+		if n.TransferID == transferID.String() {
+			notifs = append(notifs, n)
+		}
+	}
+	if notifs == nil {
+		notifs = []notification.Notification{}
+	}
+
+	return &Trace{
+		Transfer:         transfer,
+		StateTransitions: stateHistory,
+		AuditLogs:        auditLogs,
+		LedgerEntries:    ledgerEntries,
+		Notifications:    notifs,
+	}, nil
+}
+
+// getLedgerEntries fetches all ledger entries for a transfer (used in deposit handler).
+func (s *Service) getLedgerEntries(ctx context.Context, transferID uuid.UUID) ([]ledger.Entry, error) {
+	return s.ledger.GetByTransferID(ctx, transferID)
 }
